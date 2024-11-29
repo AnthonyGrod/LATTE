@@ -179,13 +179,17 @@ instance Typechecker TopDef where
     --   returnFlag = returnFlag env }
     -- put newEnv
     evalType block
-    envWithReturnFlag <- get
-    put $ resetReturnFlag envWithReturnFlag
-    if fst $ returnFlag envWithReturnFlag then
-      if snd (returnFlag envWithReturnFlag) == convertToSimple retType
-        then return $ convertToSimple retType
-        else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " returns wrong type"
-    else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " does not return"
+    if (convertToSimple retType) == SimpleVoid then do
+      return SimpleVoid
+      else do
+        envWithReturnFlag <- get
+        put $ resetReturnFlag envWithReturnFlag
+        if fst $ returnFlag envWithReturnFlag then
+          if snd (returnFlag envWithReturnFlag) == convertToSimple retType
+            then return $ convertToSimple retType
+            else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " returns wrong type"
+        else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " does not return"
+    
 
 
   evalType (VarDef pos declType ident expr) = do
@@ -235,6 +239,14 @@ instance Typechecker Arg where
   evalType (VarArg pos t _) = return $ convertToSimple t
 
 
+isELitTrue :: Expr -> Bool
+isELitTrue (ELitTrue _) = True
+isELitTrue _            = False
+
+isELitFalse :: Expr -> Bool
+isELitFalse (ELitFalse _) = True
+isELitFalse _             = False
+
 instance Typechecker Stmt where
   evalType :: Stmt -> TypecheckerResult SimpleType
   evalType (Decr pos ident) = do
@@ -261,8 +273,10 @@ instance Typechecker Stmt where
     exprType <- evalType expr
     if checkIfTypesTheSame exprType SimpleBool
       then do
-        evalType stmt1
-        evalType stmt2
+        if isELitTrue expr then
+          evalType stmt1
+        else 
+          evalType stmt2
       else throwError $ "Condition in if-else statement at " ++ showPosition pos ++ " is not a boolean expression"
 
   evalType (While pos expr stmt) = do
