@@ -32,7 +32,7 @@ FVInit.    Stmt ::= TopDef ;
 
 NoInit.    Item ::= Ident ;
 
-Init.      Item ::= Ident "=" Expr ; -- added here
+-- Init.      Item ::= Ident "=" Expr ; -- added here
 
 separator nonempty Item "," ;
 

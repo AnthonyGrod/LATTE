@@ -265,8 +265,10 @@ instance Typechecker Stmt where
 
   evalType (Cond pos expr stmt) = do
     exprType <- evalType expr
-    if (checkIfTypesTheSame exprType SimpleBool)
-      then evalType stmt
+    if (checkIfTypesTheSame exprType SimpleBool) then 
+      if not (isELitFalse expr) then
+        evalType stmt
+        else return SimpleVoid
       else throwError $ "Condition in if statement at " ++ showPosition pos ++ " is not a boolean expression"
 
   evalType (CondElse pos expr stmt1 stmt2) = do
