@@ -6,13 +6,9 @@ IProgram.  Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
-VarDef.    TopDef ::= Type Ident "=" Expr ";" ;
-
 separator nonempty TopDef "" ;
 
 IArg. 	   Arg ::= Type Ident;
-
-VarArg.    Arg ::= Type Ident ;
 
 separator  Arg "," ;
 
@@ -31,6 +27,8 @@ Decl.      Stmt ::= Type [Item] ";" ;
 FVInit.    Stmt ::= TopDef ;
 
 NoInit.    Item ::= Ident ;
+
+Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 

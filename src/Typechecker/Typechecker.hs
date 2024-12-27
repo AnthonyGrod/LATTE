@@ -36,18 +36,21 @@ data Env = Env {
   returnFlag       :: (Bool, SimpleType)
  }
 
-predefinedPrints :: [(String, [SimpleType], SimpleType)]
-predefinedPrints =
+predefinedPrintsAndReads :: [(String, [SimpleType], SimpleType)]
+predefinedPrintsAndReads =
   [ ("printInt"   , [SimpleInt]   , SimpleVoid)
   , ("printString", [SimpleString], SimpleVoid)
   , ("printBool"  , [SimpleBool]  , SimpleVoid)
+  , ("readInt"    , []            , SimpleInt)
+  , ("readString" , []            , SimpleString)
+  , ("readBool"   , []            , SimpleBool)
   ]
 
 emptyEnv :: Env
 emptyEnv = Env {
   variableToType   = Map.empty,
-  funArgumentTypes = Map.fromList [(name, args) | (name, args, _) <- predefinedPrints],
-  funReturnTypes   = Map.fromList [(name, ret)  | (name, _, ret) <- predefinedPrints],
+  funArgumentTypes = Map.fromList [(name, args) | (name, args, _) <- predefinedPrintsAndReads],
+  funReturnTypes   = Map.fromList [(name, ret)  | (name, _, ret) <- predefinedPrintsAndReads],
   returnFlag       = (False, SimpleVoid)
 }
 
@@ -116,21 +119,36 @@ instance Typechecker Expr where
 
   evalType (EApp pos ident exprs) = do
     env <- get
-    case Map.lookup (extractIdent ident) (funArgumentTypes env) of
-      Just argTypes -> do
-        exprs' <- mapM evalType exprs
-        if argTypes == exprs'
-          then case Map.lookup (extractIdent ident) (funReturnTypes env) of
-            Just t  -> return t
-            Nothing -> throwError $ "Function " ++ showIdent ident
-                                    ++ " at " ++ showPosition pos
-                                    ++ " not declared"
-          else throwError $ "Function " ++ showIdent ident
-                            ++ " at " ++ showPosition pos
-                            ++ " called with wrong arguments"
-      Nothing -> throwError $ "Function " ++ showIdent ident
+    -- First, check if the function is declared at all (i.e. in funReturnTypes).
+    case Map.lookup (extractIdent ident) (funReturnTypes env) of
+      Nothing ->
+        throwError $ "Function " ++ showIdent ident
+                    ++ " at " ++ showPosition pos
+                    ++ " not declared"
+      Just retType -> do
+        -- Next, check its argument types in funArgumentTypes.
+        case Map.lookup (extractIdent ident) (funArgumentTypes env) of
+          Nothing ->
+            if null exprs
+              then return retType
+              else throwError $ "Function " ++ showIdent ident
                               ++ " at " ++ showPosition pos
-                              ++ " not declared"
+                              ++ " called with wrong number of argumentss"
+          Just argTypes -> do
+            -- Check if the number of arguments matches.
+            if length argTypes /= length exprs
+              then throwError $ "Function " ++ showIdent ident
+                              ++ " at " ++ showPosition pos
+                              ++ " called with wrong number of argumentsss"
+              else do
+                -- Check if the argument types match.
+                exprTypes <- mapM evalType exprs
+                if and $ zipWith checkIfTypesTheSame exprTypes argTypes
+                  then return retType
+                  else throwError $ "Function " ++ showIdent ident
+                                  ++ " at " ++ showPosition pos
+                                  ++ " called with wrong argument types"
+
 
   evalType (Neg pos expr) = do
     t <- evalType expr
@@ -205,7 +223,7 @@ instance Typechecker Expr where
 instance Typechecker TopDef where
   evalType (FnDef pos retType ident args block) = do
     env <- get
-    -- Insert function definition into the environment
+    -- Insert function (besides it's name and type) into the environment
     let newEnv = env
           { variableToType = insertMultiple
                [ ( extractIdent varIdent
@@ -217,19 +235,7 @@ instance Typechecker TopDef where
                , let varIdent = varIdent'
                ]
                (variableToType env)
-
-          , funReturnTypes = Map.insert
-               (extractIdent ident)
-               (convertToSimple retType)
-               (funReturnTypes env)
-
-          , funArgumentTypes = Map.insert
-               (extractIdent ident)
-               [ convertToSimple t'
-               | IArg _ t' _ <- args
-               ]
-               (funArgumentTypes env)
-
+               
           , returnFlag = returnFlag env
           }
     put newEnv
@@ -263,18 +269,19 @@ addFunctionToEnv :: TopDef -> TypecheckerResult SimpleType
 addFunctionToEnv (FnDef pos retType ident args block) = do
     env <- get
     let newEnv = env
-          { variableToType = insertMultiple
-               [ ( extractIdent varIdent
-                 , convertToSimple t
-                 )
-               | arg <- args
-               , let (IArg _ t' varIdent') = arg
-               , let t       = t'
-               , let varIdent = varIdent'
-               ]
-               (variableToType env)
+          { 
+            -- variableToType = insertMultiple
+            --    [ ( extractIdent varIdent
+            --      , convertToSimple t
+            --      )
+            --    | arg <- args
+            --    , let (IArg _ t' varIdent') = arg
+            --    , let t       = t'
+            --    , let varIdent = varIdent'
+            --    ]
+            --    (variableToType env)
 
-          , funReturnTypes = Map.insert
+          funReturnTypes = Map.insert
                (extractIdent ident)
                (convertToSimple retType)
                (funReturnTypes env)
@@ -286,7 +293,7 @@ addFunctionToEnv (FnDef pos retType ident args block) = do
                ]
                (funArgumentTypes env)
 
-          , returnFlag = returnFlag env
+          -- , returnFlag = returnFlag env
           }
     put newEnv
     return SimpleVoid
@@ -421,43 +428,47 @@ instance Typechecker Stmt where
 
   evalType (Decl pos declType items) = do
     env <- get
-    let newEnv = env
-          { variableToType =
-               foldl
-                 (\acc declItem ->
-                    case declItem of
-                      NoInit _ ident ->
-                        Map.insert
-                          (extractIdent ident)
-                          (convertToSimple declType)
-                          acc
+    -- We'll accumulate the updated map of variables as we go.
+    -- foldM is handy since we're doing effects (evalType expr for Init).
+    newMap <- foldM
+      (\acc declItem ->
+        case declItem of
+          NoInit itemPos ident -> do
+            -- Check if already declared
+            case Map.lookup (extractIdent ident) acc of
+              Just _ ->
+                throwError $ "Variable " ++ show (extractIdent ident)
+                            ++ " at " ++ showPosition itemPos
+                            ++ " already declared"
+              Nothing -> do
+                -- Insert variable with type from declType
+                return (Map.insert (extractIdent ident)
+                                    (convertToSimple declType)
+                                    acc)
 
-                      Init _ ident expr ->
-                        let varType = convertToSimple declType
-                        in Map.insert (extractIdent ident) varType acc
-                 )
-                 (variableToType env)
-                 items
-          }
+          Init itemPos ident expr -> do
+            -- Check if already declared
+            exprType <- evalType expr
+            -- Option A: enforce that the exprType matches declType
+            let declaredType = convertToSimple declType
+            if checkIfTypesTheSame exprType declaredType
+              then return (Map.insert (extractIdent ident) declaredType acc)
+              else throwError $ "Variable " ++ show (extractIdent ident)
+                                ++ " at " ++ showPosition itemPos
+                                ++ " has type " ++ show declaredType
+                                ++ " but is initialized with "
+                                ++ show exprType
+      )
+      (variableToType env)
+      items
+
+    -- Put the new map of variables into the environment
+    let newEnv = env { variableToType = newMap }
     put newEnv
     return SimpleVoid
 
-  evalType (FVInit pos topDef) =
-    evalType topDef
 
-instance Typechecker Item where
-  evalType (NoInit _ _) = return SimpleVoid
-  evalType (Init pos ident expr) = do
-    env <- get
-    exprType <- evalType expr
-    case Map.lookup (extractIdent ident) (variableToType env) of
-      Just a ->
-        if a == exprType
-          then return SimpleVoid
-          else throwError $ "Wrong type in assignment at "
-                           ++ showPosition pos
-      Nothing -> throwError $ "Variable "
-                              ++ show (extractIdent ident)
-                              ++ " at "
-                              ++ showPosition pos
-                              ++ " not declared (init)"
+  evalType (FVInit pos topDef) =
+    evalType topDef        
+
+
