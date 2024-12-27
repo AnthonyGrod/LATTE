@@ -15,8 +15,8 @@ import Control.Monad.Except
 data SimpleType = SimpleInt | SimpleBool | SimpleString | SimpleVoid deriving Eq
 
 convertToSimple :: Type -> SimpleType
-convertToSimple (Int _) = SimpleInt
-convertToSimple (Str _) = SimpleString
+convertToSimple (Int _)  = SimpleInt
+convertToSimple (Str _)  = SimpleString
 convertToSimple (Bool _) = SimpleBool
 convertToSimple (Void _) = SimpleVoid
 
@@ -30,37 +30,45 @@ insertMultiple :: Ord k => [(k, v)] -> Map k v -> Map k v
 insertMultiple kvs m = foldl (\acc (k, v) -> Map.insert k v acc) m kvs
 
 data Env = Env {
-  variableToType :: Map.Map String SimpleType,
+  variableToType   :: Map.Map String SimpleType,
   funArgumentTypes :: Map.Map String [SimpleType],
-  funReturnTypes :: Map.Map String SimpleType,
-  returnFlag :: (Bool, SimpleType)
+  funReturnTypes   :: Map.Map String SimpleType,
+  returnFlag       :: (Bool, SimpleType)
  }
 
 predefinedPrints :: [(String, [SimpleType], SimpleType)]
-predefinedPrints = [("printInt", [SimpleInt], SimpleVoid), ("printString", [SimpleString], SimpleVoid), ("printBool", [SimpleBool], SimpleVoid)]
+predefinedPrints =
+  [ ("printInt"   , [SimpleInt]   , SimpleVoid)
+  , ("printString", [SimpleString], SimpleVoid)
+  , ("printBool"  , [SimpleBool]  , SimpleVoid)
+  ]
 
 emptyEnv :: Env
 emptyEnv = Env {
-  variableToType = Map.empty,
+  variableToType   = Map.empty,
   funArgumentTypes = Map.fromList [(name, args) | (name, args, _) <- predefinedPrints],
-  funReturnTypes = Map.fromList [(name, ret) | (name, _, ret) <- predefinedPrints],
-  returnFlag = (False, SimpleVoid)
+  funReturnTypes   = Map.fromList [(name, ret)  | (name, _, ret) <- predefinedPrints],
+  returnFlag       = (False, SimpleVoid)
 }
 
-checkIfAlreadyDeclaredInEnv :: String -> TypecheckerResult Bool
-checkIfAlreadyDeclaredInEnv var env = do
+checkIfAlreadyDeclaredInEnv :: String -> Env -> Either String Bool
+checkIfAlreadyDeclaredInEnv var env =
   case Map.lookup var (variableToType env) of
-    Just _ -> return True
-    Nothing -> throwError $ "Variable " ++ var ++ " already declared"
+    Just _  -> Right True
+    Nothing -> Left $ "Variable " ++ var ++ " already declared"
 
 instance Show SimpleType where
-  show SimpleInt = "int"
-  show SimpleBool = "bool"
+  show SimpleInt    = "int"
+  show SimpleBool   = "bool"
   show SimpleString = "string"
-  show SimpleVoid = "void"
+  show SimpleVoid   = "void"
 
 instance Show Env where
-  show (Env varTypes funArgTypes funRetTypes flag) = "Env { varTypes = " ++ show varTypes ++ ", funArgTypes = " ++ show funArgTypes ++ ", funRetTypes = " ++ show funRetTypes ++ ", flag = " ++ show flag ++ " }"
+  show (Env varTypes funArgTypes funRetTypes flag) =
+    "Env { varTypes = " ++ show varTypes
+    ++ ", funArgTypes = " ++ show funArgTypes
+    ++ ", funRetTypes = " ++ show funRetTypes
+    ++ ", flag = " ++ show flag ++ " }"
 
 resetReturnFlag :: Env -> Env
 resetReturnFlag env = env { returnFlag = (False, SimpleVoid) }
@@ -75,10 +83,10 @@ typecheck program = runExceptT $ evalStateT (evalType program) emptyEnv
 
 showPosition :: BNFC'Position -> String
 showPosition (Just (l, c)) = "line " ++ show l ++ ", column " ++ show c
+showPosition Nothing       = "unknown position"
 
 showIdent :: Ident -> String
 showIdent (Ident s) = s
-
 
 instance Typechecker Block where
   evalType (IBlock pos stmts) = do
@@ -86,24 +94,25 @@ instance Typechecker Block where
     mapM_ evalType stmts
     env' <- get
     put $ env' {
-      variableToType = variableToType env,
+      variableToType   = variableToType env,
       funArgumentTypes = funArgumentTypes env,
-      funReturnTypes = funReturnTypes env }
+      funReturnTypes   = funReturnTypes env
+    }
     return SimpleVoid
 
-
 instance Typechecker Expr where
-  evalType :: Expr -> TypecheckerResult SimpleType
   evalType (EVar pos ident) = do
     env <- get
     case Map.lookup (extractIdent ident) (variableToType env) of
-      Just t -> return t
-      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared"
+      Just t  -> return t
+      Nothing -> throwError $ "Variable " ++ show (extractIdent ident)
+                              ++ " at " ++ showPosition pos
+                              ++ " not declared"
 
-  evalType (ELitInt _ _) = return SimpleInt
-  evalType (ELitTrue _) = return SimpleBool
-  evalType (ELitFalse _) = return SimpleBool
-  evalType (EString _ _) = return SimpleString
+  evalType (ELitInt _ _)     = return SimpleInt
+  evalType (ELitTrue _)      = return SimpleBool
+  evalType (ELitFalse _)     = return SimpleBool
+  evalType (EString _ _)     = return SimpleString
 
   evalType (EApp pos ident exprs) = do
     env <- get
@@ -112,127 +121,202 @@ instance Typechecker Expr where
         exprs' <- mapM evalType exprs
         if argTypes == exprs'
           then case Map.lookup (extractIdent ident) (funReturnTypes env) of
-            Just t -> return t
-            Nothing -> throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " not declared"
-          else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " called with wrong arguments"
-      Nothing -> throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " not declared"
+            Just t  -> return t
+            Nothing -> throwError $ "Function " ++ showIdent ident
+                                    ++ " at " ++ showPosition pos
+                                    ++ " not declared"
+          else throwError $ "Function " ++ showIdent ident
+                            ++ " at " ++ showPosition pos
+                            ++ " called with wrong arguments"
+      Nothing -> throwError $ "Function " ++ showIdent ident
+                              ++ " at " ++ showPosition pos
+                              ++ " not declared"
 
   evalType (Neg pos expr) = do
     t <- evalType expr
     if checkIfTypesTheSame t SimpleInt
       then return SimpleInt
-      else throwError $ "Negating non-integer expression at " ++ showPosition pos
+      else throwError $ "Negating non-integer expression at "
+                       ++ showPosition pos
 
   evalType (Not pos expr) = do
     t <- evalType expr
     if checkIfTypesTheSame t SimpleBool
       then return SimpleBool
-      else throwError $ "Negating non-boolean expression at " ++ showPosition pos
+      else throwError $ "Negating non-boolean expression at "
+                       ++ showPosition pos
 
   evalType (EMul pos expr1 op expr2) = do
     t1 <- evalType expr1
     t2 <- evalType expr2
-    if checkIfTypesTheSame t1 SimpleInt && checkIfTypesTheSame t2 SimpleInt
+    if checkIfTypesTheSame t1 SimpleInt
+       && checkIfTypesTheSame t2 SimpleInt
       then return SimpleInt
-      else throwError $ "Multiplying non-integer expressions at " ++ showPosition pos
+      else throwError $ "Multiplying non-integer expressions at "
+                       ++ showPosition pos
 
   evalType (EAdd pos expr1 _ expr2) = do
     t1 <- evalType expr1
     t2 <- evalType expr2
-    if (checkIfTypesTheSame t1 SimpleInt && checkIfTypesTheSame t2 SimpleInt) || (checkIfTypesTheSame t1 SimpleString && checkIfTypesTheSame t2 SimpleString)
+    if ( checkIfTypesTheSame t1 SimpleInt
+         && checkIfTypesTheSame t2 SimpleInt
+       ) || ( checkIfTypesTheSame t1 SimpleString
+              && checkIfTypesTheSame t2 SimpleString
+            )
       then
-        if checkIfTypesTheSame t1 SimpleString && checkIfTypesTheSame t2 SimpleString
+        if checkIfTypesTheSame t1 SimpleString
+           && checkIfTypesTheSame t2 SimpleString
           then return SimpleString
           else return SimpleInt
-      else throwError $ "Adding non-integer expressions at " ++ showPosition pos
+      else throwError $ "Adding expressions of incompatible types at "
+                       ++ showPosition pos
 
   evalType (ERel pos expr1 _ expr2) = do
     t1 <- evalType expr1
     t2 <- evalType expr2
-    if (checkIfTypesTheSame t1 SimpleInt && checkIfTypesTheSame t2 SimpleInt)
-      || (checkIfTypesTheSame t1 SimpleBool && checkIfTypesTheSame t2 SimpleBool)
-      || (checkIfTypesTheSame t1 SimpleString && checkIfTypesTheSame t2 SimpleString)
+    if (checkIfTypesTheSame t1 SimpleInt
+        && checkIfTypesTheSame t2 SimpleInt)
+       || (checkIfTypesTheSame t1 SimpleBool
+           && checkIfTypesTheSame t2 SimpleBool)
+       || (checkIfTypesTheSame t1 SimpleString
+           && checkIfTypesTheSame t2 SimpleString)
       then return SimpleBool
-      else throwError $ "Comparing non-integer expressions at " ++ showPosition pos
+      else throwError $ "Comparing incompatible expressions at "
+                       ++ showPosition pos
 
   evalType (EAnd pos expr1 expr2) = do
     t1 <- evalType expr1
     t2 <- evalType expr2
-    if checkIfTypesTheSame t1 SimpleBool && checkIfTypesTheSame t2 SimpleBool
+    if checkIfTypesTheSame t1 SimpleBool
+       && checkIfTypesTheSame t2 SimpleBool
       then return SimpleBool
-      else throwError $ "Anding non-boolean expressions at " ++ showPosition pos
+      else throwError $ "Logical AND on non-boolean expressions at "
+                       ++ showPosition pos
 
   evalType (EOr pos expr1 expr2) = do
     t1 <- evalType expr1
     t2 <- evalType expr2
-    if checkIfTypesTheSame t1 SimpleBool && checkIfTypesTheSame t2 SimpleBool
+    if checkIfTypesTheSame t1 SimpleBool
+       && checkIfTypesTheSame t2 SimpleBool
       then return SimpleBool
-      else throwError $ "Oring non-boolean expressions at " ++ showPosition pos
-
+      else throwError $ "Logical OR on non-boolean expressions at "
+                       ++ showPosition pos
 
 instance Typechecker TopDef where
-  evalType :: TopDef -> TypecheckerResult SimpleType
   evalType (FnDef pos retType ident args block) = do
     env <- get
-    let newEnv = env {
-      variableToType = insertMultiple [(extractIdent varIdent, convertToSimple t) | arg <- args, let (t, varIdent) = case arg of
-                                                                                                             IArg _ t' varIdent' -> (t', varIdent')
-                                                                                                             VarArg _ t' varIdent' -> (t', varIdent')] (variableToType env),
-      funReturnTypes = Map.insert (extractIdent ident) (convertToSimple retType) (funReturnTypes env),
-      funArgumentTypes = Map.insert (extractIdent ident) (map (\arg -> case arg of
-                                                                         IArg _ t _ -> convertToSimple t
-                                                                         VarArg _ t _ -> convertToSimple t) args) (funArgumentTypes env),
-      returnFlag = returnFlag env }
+    -- Insert function definition into the environment
+    let newEnv = env
+          { variableToType = insertMultiple
+               [ ( extractIdent varIdent
+                 , convertToSimple t
+                 )
+               | arg <- args
+               , let (IArg _ t' varIdent') = arg
+               , let t       = t'
+               , let varIdent = varIdent'
+               ]
+               (variableToType env)
+
+          , funReturnTypes = Map.insert
+               (extractIdent ident)
+               (convertToSimple retType)
+               (funReturnTypes env)
+
+          , funArgumentTypes = Map.insert
+               (extractIdent ident)
+               [ convertToSimple t'
+               | IArg _ t' _ <- args
+               ]
+               (funArgumentTypes env)
+
+          , returnFlag = returnFlag env
+          }
     put newEnv
+
+    -- Evaluate the function body
     evalType block
-    if convertToSimple retType == SimpleVoid then do
-      return SimpleVoid
+
+    -- Check return type consistency
+    if convertToSimple retType == SimpleVoid
+      then return SimpleVoid
       else do
         envWithReturnFlag <- get
         put $ resetReturnFlag envWithReturnFlag
-        if fst $ returnFlag envWithReturnFlag then
-          if snd (returnFlag envWithReturnFlag) == convertToSimple retType
-            then return $ convertToSimple retType
-            else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " returns wrong type"
-        else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " does not return"
-
+        if fst $ returnFlag envWithReturnFlag
+          then
+            if snd (returnFlag envWithReturnFlag)
+               == convertToSimple retType
+              then return $ convertToSimple retType
+              else throwError $ "Function "
+                                ++ showIdent ident
+                                ++ " at "
+                                ++ showPosition pos
+                                ++ " returns wrong type"
+          else throwError $ "Function "
+                            ++ showIdent ident
+                            ++ " at "
+                            ++ showPosition pos
+                            ++ " does not return"
 
 addFunctionToEnv :: TopDef -> TypecheckerResult SimpleType
 addFunctionToEnv (FnDef pos retType ident args block) = do
     env <- get
-    let newEnv = env {
-      variableToType = insertMultiple [(extractIdent varIdent, convertToSimple t) | arg <- args, let (t, varIdent) = case arg of
-                                                                                                             IArg _ t' varIdent' -> (t', varIdent')
-                                                                                                             VarArg _ t' varIdent' -> (t', varIdent')] (variableToType env),
-      funReturnTypes = Map.insert (extractIdent ident) (convertToSimple retType) (funReturnTypes env),
-      funArgumentTypes = Map.insert (extractIdent ident) (map (\arg -> case arg of
-                                                                         IArg _ t _ -> convertToSimple t
-                                                                         VarArg _ t _ -> convertToSimple t) args) (funArgumentTypes env),
-      returnFlag = returnFlag env 
-      }
+    let newEnv = env
+          { variableToType = insertMultiple
+               [ ( extractIdent varIdent
+                 , convertToSimple t
+                 )
+               | arg <- args
+               , let (IArg _ t' varIdent') = arg
+               , let t       = t'
+               , let varIdent = varIdent'
+               ]
+               (variableToType env)
+
+          , funReturnTypes = Map.insert
+               (extractIdent ident)
+               (convertToSimple retType)
+               (funReturnTypes env)
+
+          , funArgumentTypes = Map.insert
+               (extractIdent ident)
+               [ convertToSimple t'
+               | IArg _ t' _ <- args
+               ]
+               (funArgumentTypes env)
+
+          , returnFlag = returnFlag env
+          }
     put newEnv
     return SimpleVoid
 
-
 instance Typechecker Program where
-  evalType :: Program -> TypecheckerResult SimpleType
   evalType (IProgram pos topDefs) = do
+    -- First, add all top-level functions to the environment
     mapM_ addFunctionToEnv topDefs
+    -- Then, actually typecheck them
     mapM_ evalType topDefs
+
+    -- Finally, check for a valid `main` function
     env <- get
     case Map.lookup "main" (funArgumentTypes env) of
-      Just [] -> case Map.lookup "main" (funReturnTypes env) of
-        Just SimpleInt -> return SimpleInt
-        Just _ -> throwError $ "Function main at " ++ showPosition pos ++ " returns wrong type"
-        Nothing -> throwError $ "Function main at " ++ showPosition pos ++ " not declared"
-      _ -> throwError $ "Function main at " ++ showPosition pos ++ " not declared"
-
+      Just [] ->
+        case Map.lookup "main" (funReturnTypes env) of
+          Just SimpleInt -> return SimpleInt
+          Just _ -> throwError $ "Function main at "
+                                 ++ showPosition pos
+                                 ++ " returns wrong type"
+          Nothing -> throwError $ "Function main at "
+                                  ++ showPosition pos
+                                  ++ " not declared"
+      _ -> throwError $ "Function main at "
+                        ++ showPosition pos
+                        ++ " not declared"
 
 instance Typechecker Arg where
-  evalType :: Arg -> TypecheckerResult SimpleType
+  -- Since we no longer have VarArg, we only match IArg
   evalType (IArg pos t _) = return $ convertToSimple t
-  evalType (VarArg pos t _) = return $ convertToSimple t
-
 
 isELitTrue :: Expr -> Bool
 isELitTrue (ELitTrue _) = True
@@ -243,46 +327,66 @@ isELitFalse (ELitFalse _) = True
 isELitFalse _             = False
 
 instance Typechecker Stmt where
-  evalType :: Stmt -> TypecheckerResult SimpleType
   evalType (Decr pos ident) = do
     env <- get
     case Map.lookup (extractIdent ident) (variableToType env) of
       Just SimpleInt -> return SimpleInt
-      Just _ -> throwError $ "Decrementing non-integer variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos
-      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared (decr)"
+      Just _ -> throwError $ "Decrementing non-integer variable "
+                             ++ show (extractIdent ident)
+                             ++ " at "
+                             ++ showPosition pos
+      Nothing -> throwError $ "Variable "
+                              ++ show (extractIdent ident)
+                              ++ " at "
+                              ++ showPosition pos
+                              ++ " not declared (decr)"
 
   evalType (Ass pos ident expr) = do
     env <- get
     exprType <- evalType expr
     case Map.lookup (extractIdent ident) (variableToType env) of
-      Just a -> if a == exprType then return SimpleVoid else throwError $ "Wrong type in assignment at " ++ showPosition pos
-      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared (decr)"
+      Just a -> if a == exprType
+                  then return SimpleVoid
+                  else throwError $ "Wrong type in assignment at "
+                                   ++ showPosition pos
+      Nothing -> throwError $ "Variable "
+                              ++ show (extractIdent ident)
+                              ++ " at "
+                              ++ showPosition pos
+                              ++ " not declared (ass)"
 
   evalType (Cond pos expr stmt) = do
     exprType <- evalType expr
-    if (checkIfTypesTheSame exprType SimpleBool) then
-      if not (isELitFalse expr) then
-        evalType stmt
-        else return SimpleVoid
-      else throwError $ "Condition in if statement at " ++ showPosition pos ++ " is not a boolean expression"
+    if checkIfTypesTheSame exprType SimpleBool
+      then
+        if not (isELitFalse expr)
+          then evalType stmt
+          else return SimpleVoid
+      else throwError $ "Condition in if statement at "
+                       ++ showPosition pos
+                       ++ " is not a boolean expression"
 
   evalType (CondElse pos expr stmt1 stmt2) = do
     exprType <- evalType expr
     if checkIfTypesTheSame exprType SimpleBool
-      then do
-        if isELitTrue expr then
-          evalType stmt1
-        else
-          evalType stmt2
-      else throwError $ "Condition in if-else statement at " ++ showPosition pos ++ " is not a boolean expression"
+      then
+        if isELitTrue expr
+          then evalType stmt1
+          else evalType stmt2
+      else throwError $ "Condition in if-else statement at "
+                       ++ showPosition pos
+                       ++ " is not a boolean expression"
 
   evalType (While pos expr stmt) = do
     exprType <- evalType expr
     if checkIfTypesTheSame exprType SimpleBool
       then evalType stmt
-      else throwError $ "Condition in while statement at " ++ showPosition pos ++ " is not a boolean expression"
+      else throwError $ "Condition in while statement at "
+                       ++ showPosition pos
+                       ++ " is not a boolean expression"
 
-  evalType (SExp _ expr) = evalType expr
+  evalType (SExp _ expr) =
+    evalType expr
 
   evalType (Ret pos expr) = do
     env <- get
@@ -299,12 +403,21 @@ instance Typechecker Stmt where
     env <- get
     case Map.lookup (extractIdent ident) (variableToType env) of
       Just SimpleInt -> return SimpleInt
-      Just _ -> throwError $ "Incrementing non-integer variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos
-      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared"
+      Just _ -> throwError $ "Incrementing non-integer variable "
+                             ++ show (extractIdent ident)
+                             ++ " at "
+                             ++ showPosition pos
+      Nothing -> throwError $ "Variable "
+                              ++ show (extractIdent ident)
+                              ++ " at "
+                              ++ showPosition pos
+                              ++ " not declared"
 
-  evalType (Empty _) = return SimpleVoid
+  evalType (Empty _) =
+    return SimpleVoid
 
-  evalType (BStmt _ block) = evalType block
+  evalType (BStmt _ block) =
+    evalType block
 
   evalType (Decl pos declType items) = do
     env <- get
@@ -312,13 +425,16 @@ instance Typechecker Stmt where
           { variableToType =
                foldl
                  (\acc declItem ->
-                   case declItem of
-                     NoInit _ ident ->
-                       Map.insert (extractIdent ident) (convertToSimple declType) acc
+                    case declItem of
+                      NoInit _ ident ->
+                        Map.insert
+                          (extractIdent ident)
+                          (convertToSimple declType)
+                          acc
 
-                     Init _ ident expr ->
-                       let varType = convertToSimple declType
-                       in Map.insert (extractIdent ident) varType acc
+                      Init _ ident expr ->
+                        let varType = convertToSimple declType
+                        in Map.insert (extractIdent ident) varType acc
                  )
                  (variableToType env)
                  items
@@ -326,26 +442,22 @@ instance Typechecker Stmt where
     put newEnv
     return SimpleVoid
 
-  evalType (FVInit pos topDef) = do
+  evalType (FVInit pos topDef) =
     evalType topDef
 
 instance Typechecker Item where
-  evalType :: Item -> TypecheckerResult SimpleType
   evalType (NoInit _ _) = return SimpleVoid
   evalType (Init pos ident expr) = do
     env <- get
     exprType <- evalType expr
     case Map.lookup (extractIdent ident) (variableToType env) of
-      Just a -> if a == exprType then return SimpleVoid else throwError $ "Wrong type in assignment at " ++ showPosition pos
-      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared (decr)"
-
-
-    --   evalType (VarDef pos declType ident expr) = do
-    -- env <- get
-    -- exprType <- evalType expr
-    -- if not $ checkIfTypesTheSame (convertToSimple declType) exprType
-    --   then throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " initialized with wrong type"
-    -- else do
-    --   let newEnv = env { variableToType = Map.insert (extractIdent ident) (convertToSimple declType) (variableToType env) }
-    --   put newEnv
-    --   return SimpleVoid
+      Just a ->
+        if a == exprType
+          then return SimpleVoid
+          else throwError $ "Wrong type in assignment at "
+                           ++ showPosition pos
+      Nothing -> throwError $ "Variable "
+                              ++ show (extractIdent ident)
+                              ++ " at "
+                              ++ showPosition pos
+                              ++ " not declared (init)"
