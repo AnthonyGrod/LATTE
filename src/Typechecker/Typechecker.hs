@@ -235,7 +235,7 @@ instance Typechecker TopDef where
                , let varIdent = varIdent'
                ]
                (variableToType env)
-               
+
           , returnFlag = returnFlag env
           }
     put newEnv
@@ -363,11 +363,21 @@ instance Typechecker Stmt where
                               ++ " not declared (ass)"
 
   evalType (Cond pos expr stmt) = do
+    env <- get
+    let initialReturnFlag = returnFlag env
     exprType <- evalType expr
     if checkIfTypesTheSame exprType SimpleBool
       then
         if not (isELitFalse expr)
-          then evalType stmt
+          then do
+            evalType stmt
+            envAfter <- get
+            if not (isELitTrue expr) then do
+              if initialReturnFlag /= returnFlag envAfter then do
+                put $ envAfter { returnFlag = initialReturnFlag }
+                return SimpleVoid
+              else return SimpleVoid
+            else return SimpleVoid
           else return SimpleVoid
       else throwError $ "Condition in if statement at "
                        ++ showPosition pos
@@ -397,14 +407,22 @@ instance Typechecker Stmt where
 
   evalType (Ret pos expr) = do
     env <- get
-    exprType <- evalType expr
-    put $ env { returnFlag = (True, exprType) }
-    return SimpleVoid
+    let (isReturnSet, currentType) = returnFlag env
+    if isReturnSet
+      then return currentType  -- If already set, do nothing and return current type
+      else do
+        exprType <- evalType expr
+        put $ env { returnFlag = (True, exprType) }
+        return exprType
 
   evalType (VRet pos) = do
     env <- get
-    put $ env { returnFlag = (True, SimpleVoid) }
-    return SimpleVoid
+    let (isReturnSet, currentType) = returnFlag env
+    if isReturnSet
+      then return currentType
+      else do
+        put $ env { returnFlag = (True, SimpleVoid) }
+        return SimpleVoid
 
   evalType (Incr pos ident) = do
     env <- get
