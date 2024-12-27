@@ -47,6 +47,12 @@ emptyEnv = Env {
   returnFlag = (False, SimpleVoid)
 }
 
+checkIfAlreadyDeclaredInEnv :: String -> TypecheckerResult Bool
+checkIfAlreadyDeclaredInEnv var env = do
+  case Map.lookup var (variableToType env) of
+    Just _ -> return True
+    Nothing -> throwError $ "Variable " ++ var ++ " already declared"
+
 instance Show SimpleType where
   show SimpleInt = "int"
   show SimpleBool = "bool"
@@ -134,7 +140,7 @@ instance Typechecker Expr where
     t1 <- evalType expr1
     t2 <- evalType expr2
     if (checkIfTypesTheSame t1 SimpleInt && checkIfTypesTheSame t2 SimpleInt) || (checkIfTypesTheSame t1 SimpleString && checkIfTypesTheSame t2 SimpleString)
-      then 
+      then
         if checkIfTypesTheSame t1 SimpleString && checkIfTypesTheSame t2 SimpleString
           then return SimpleString
           else return SimpleInt
@@ -168,18 +174,18 @@ instance Typechecker TopDef where
   evalType :: TopDef -> TypecheckerResult SimpleType
   evalType (FnDef pos retType ident args block) = do
     env <- get
-    -- let newEnv = env {
-    --   variableToType = insertMultiple [(extractIdent varIdent, convertToSimple t) | arg <- args, let (t, varIdent) = case arg of
-    --                                                                                                          IArg _ t' varIdent' -> (t', varIdent')
-    --                                                                                                          VarArg _ t' varIdent' -> (t', varIdent')] (variableToType env),
-    --   funReturnTypes = Map.insert (extractIdent ident) (convertToSimple retType) (funReturnTypes env),
-    --   funArgumentTypes = Map.insert (extractIdent ident) (map (\arg -> case arg of
-    --                                                                      IArg _ t _ -> convertToSimple t
-    --                                                                      VarArg _ t _ -> convertToSimple t) args) (funArgumentTypes env),
-    --   returnFlag = returnFlag env }
-    -- put newEnv
+    let newEnv = env {
+      variableToType = insertMultiple [(extractIdent varIdent, convertToSimple t) | arg <- args, let (t, varIdent) = case arg of
+                                                                                                             IArg _ t' varIdent' -> (t', varIdent')
+                                                                                                             VarArg _ t' varIdent' -> (t', varIdent')] (variableToType env),
+      funReturnTypes = Map.insert (extractIdent ident) (convertToSimple retType) (funReturnTypes env),
+      funArgumentTypes = Map.insert (extractIdent ident) (map (\arg -> case arg of
+                                                                         IArg _ t _ -> convertToSimple t
+                                                                         VarArg _ t _ -> convertToSimple t) args) (funArgumentTypes env),
+      returnFlag = returnFlag env }
+    put newEnv
     evalType block
-    if (convertToSimple retType) == SimpleVoid then do
+    if convertToSimple retType == SimpleVoid then do
       return SimpleVoid
       else do
         envWithReturnFlag <- get
@@ -189,18 +195,6 @@ instance Typechecker TopDef where
             then return $ convertToSimple retType
             else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " returns wrong type"
         else throwError $ "Function " ++ showIdent ident ++ " at " ++ showPosition pos ++ " does not return"
-    
-
-
-  evalType (VarDef pos declType ident expr) = do
-    env <- get
-    exprType <- evalType expr
-    if not $ checkIfTypesTheSame (convertToSimple declType) exprType
-      then throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " initialized with wrong type"
-    else do
-      let newEnv = env { variableToType = Map.insert (extractIdent ident) (convertToSimple declType) (variableToType env) }
-      put newEnv
-      return SimpleVoid
 
 
 addFunctionToEnv :: TopDef -> TypecheckerResult SimpleType
@@ -214,7 +208,8 @@ addFunctionToEnv (FnDef pos retType ident args block) = do
       funArgumentTypes = Map.insert (extractIdent ident) (map (\arg -> case arg of
                                                                          IArg _ t _ -> convertToSimple t
                                                                          VarArg _ t _ -> convertToSimple t) args) (funArgumentTypes env),
-      returnFlag = returnFlag env }
+      returnFlag = returnFlag env 
+      }
     put newEnv
     return SimpleVoid
 
@@ -265,7 +260,7 @@ instance Typechecker Stmt where
 
   evalType (Cond pos expr stmt) = do
     exprType <- evalType expr
-    if (checkIfTypesTheSame exprType SimpleBool) then 
+    if (checkIfTypesTheSame exprType SimpleBool) then
       if not (isELitFalse expr) then
         evalType stmt
         else return SimpleVoid
@@ -277,7 +272,7 @@ instance Typechecker Stmt where
       then do
         if isELitTrue expr then
           evalType stmt1
-        else 
+        else
           evalType stmt2
       else throwError $ "Condition in if-else statement at " ++ showPosition pos ++ " is not a boolean expression"
 
@@ -313,10 +308,44 @@ instance Typechecker Stmt where
 
   evalType (Decl pos declType items) = do
     env <- get
-    let newEnv = env { variableToType = foldl (\acc (NoInit _ ident) -> Map.insert (extractIdent ident) (convertToSimple declType) acc) (variableToType env) items }
+    let newEnv = env
+          { variableToType =
+               foldl
+                 (\acc declItem ->
+                   case declItem of
+                     NoInit _ ident ->
+                       Map.insert (extractIdent ident) (convertToSimple declType) acc
+
+                     Init _ ident expr ->
+                       let varType = convertToSimple declType
+                       in Map.insert (extractIdent ident) varType acc
+                 )
+                 (variableToType env)
+                 items
+          }
     put newEnv
     return SimpleVoid
 
   evalType (FVInit pos topDef) = do
     evalType topDef
 
+instance Typechecker Item where
+  evalType :: Item -> TypecheckerResult SimpleType
+  evalType (NoInit _ _) = return SimpleVoid
+  evalType (Init pos ident expr) = do
+    env <- get
+    exprType <- evalType expr
+    case Map.lookup (extractIdent ident) (variableToType env) of
+      Just a -> if a == exprType then return SimpleVoid else throwError $ "Wrong type in assignment at " ++ showPosition pos
+      Nothing -> throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " not declared (decr)"
+
+
+    --   evalType (VarDef pos declType ident expr) = do
+    -- env <- get
+    -- exprType <- evalType expr
+    -- if not $ checkIfTypesTheSame (convertToSimple declType) exprType
+    --   then throwError $ "Variable " ++ show (extractIdent ident) ++ " at " ++ showPosition pos ++ " initialized with wrong type"
+    -- else do
+    --   let newEnv = env { variableToType = Map.insert (extractIdent ident) (convertToSimple declType) (variableToType env) }
+    --   put newEnv
+    --   return SimpleVoid
