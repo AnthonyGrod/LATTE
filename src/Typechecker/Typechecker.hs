@@ -242,12 +242,13 @@ instance Typechecker TopDef where
 
     -- Evaluate the function body
     evalType block
-
+    envWithReturnFlag <- get
     -- Check return type consistency
     if convertToSimple retType == SimpleVoid
-      then return SimpleVoid
+      then do 
+        put $ resetReturnFlag envWithReturnFlag
+        return SimpleVoid
       else do
-        envWithReturnFlag <- get
         put $ resetReturnFlag envWithReturnFlag
         if fst $ returnFlag envWithReturnFlag
           then
