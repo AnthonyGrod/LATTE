@@ -25,10 +25,10 @@ executable INTP
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    Interpreter, Typechecker.Typechecker, Parser.Abs, Parser.ErrM, Parser.Par, Parser.Lex
+    other-modules:    Interpreter, Typechecker.Typechecker, Parser.Abs, Parser.ErrM, Parser.Par, Parser.Lex, Backend, Types, State, Aux
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base ^>=4.15.1.0, mtl, containers, array
-    hs-source-dirs:   app
+    build-depends:    base ^>=4.17.2.0, mtl, containers, array
+    hs-source-dirs:   src
     default-language: Haskell2010

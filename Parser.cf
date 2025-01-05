@@ -2,19 +2,19 @@
 
 entrypoints Program ;
 
-IProgram.  Program ::= [TopDef] ;
+Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
 separator nonempty TopDef "" ;
 
-IArg. 	   Arg ::= Type Ident;
+Arg. 	   Arg ::= Type Ident;
 
 separator  Arg "," ;
 
 -- statements ----------------------------------------------
 
-IBlock.    Block ::= "{" [Stmt] "}" ;
+Block.     Block ::= "{" [Stmt] "}" ;
 
 separator  Stmt "" ;
 
@@ -24,9 +24,7 @@ BStmt.     Stmt ::= Block ;
 
 Decl.      Stmt ::= Type [Item] ";" ;
 
-FVInit.    Stmt ::= TopDef ;
-
-NoInit.    Item ::= Ident ;
+NoInit.    Item ::= Ident ; 
 
 Init.      Item ::= Ident "=" Expr ;
 
@@ -59,6 +57,10 @@ Str.       Type ::= "string" ;
 Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
+
+internal   Fun. Type ::= Type "(" [Type] ")" ;
+
+separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 

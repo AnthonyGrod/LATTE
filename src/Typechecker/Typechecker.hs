@@ -92,7 +92,7 @@ showIdent :: Ident -> String
 showIdent (Ident s) = s
 
 instance Typechecker Block where
-  evalType (IBlock pos stmts) = do
+  evalType (Block pos stmts) = do
     env <- get
     mapM_ evalType stmts
     env' <- get
@@ -230,7 +230,7 @@ instance Typechecker TopDef where
                  , convertToSimple t
                  )
                | arg <- args
-               , let (IArg _ t' varIdent') = arg
+               , let (Arg _ t' varIdent') = arg
                , let t       = t'
                , let varIdent = varIdent'
                ]
@@ -276,7 +276,7 @@ addFunctionToEnv (FnDef pos retType ident args block) = do
             --      , convertToSimple t
             --      )
             --    | arg <- args
-            --    , let (IArg _ t' varIdent') = arg
+            --    , let (Arg _ t' varIdent') = arg
             --    , let t       = t'
             --    , let varIdent = varIdent'
             --    ]
@@ -290,7 +290,7 @@ addFunctionToEnv (FnDef pos retType ident args block) = do
           , funArgumentTypes = Map.insert
                (extractIdent ident)
                [ convertToSimple t'
-               | IArg _ t' _ <- args
+               | Arg _ t' _ <- args
                ]
                (funArgumentTypes env)
 
@@ -300,7 +300,7 @@ addFunctionToEnv (FnDef pos retType ident args block) = do
     return SimpleVoid
 
 instance Typechecker Program where
-  evalType (IProgram pos topDefs) = do
+  evalType (Program pos topDefs) = do
     -- First, add all top-level functions to the environment
     mapM_ addFunctionToEnv topDefs
     -- Then, actually typecheck them
@@ -323,8 +323,8 @@ instance Typechecker Program where
                         ++ " not declared"
 
 instance Typechecker Arg where
-  -- Since we no longer have VarArg, we only match IArg
-  evalType (IArg pos t _) = return $ convertToSimple t
+  -- Since we no longer have VarArg, we only match Arg
+  evalType (Arg pos t _) = return $ convertToSimple t
 
 isELitTrue :: Expr -> Bool
 isELitTrue (ELitTrue _) = True
@@ -484,10 +484,5 @@ instance Typechecker Stmt where
     -- Put the new map of variables into the environment
     let newEnv = env { variableToType = newMap }
     put newEnv
-    return SimpleVoid
-
-
-  evalType (FVInit pos topDef) =
-    evalType topDef        
-
+    return SimpleVoid   
 
