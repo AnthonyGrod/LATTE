@@ -35,7 +35,7 @@ instance Compiler Program where
   generateLLVM :: Program -> CompilerM RegisterAndType
   generateLLVM (Program _ topDefs) = do
     topDefsLLVM <- mapM generateLLVM topDefs
-    genLLVM <- getAllBasicBlocksGenLLVM
+    genLLVM <- getGenLLVM
     -- mapM_ (liftIO . print) genLLVM
     liftIO $ writeFile "output.ll" (unlines (map show genLLVM))
     return dummyReturnRegisterAndType
@@ -52,7 +52,7 @@ instance Compiler TopDef where -- IMO no blocks generation is required - just in
     insertEmptyBasicBlock label
     addGenLLVM $ IFunPr funValue
     addGenLLVM $ ILabel label
-    blockLastReg <- generateLLVM block
+    _ <- generateLLVM block
     -- do phi?? - maybe not needed
     addGenLLVM IFunEp
     return dummyReturnRegisterAndType
@@ -230,21 +230,22 @@ instance Compiler Stmt where
 
   generateLLVM (SExp _ expr) = generateLLVM expr
 
+  -- generateLLVM (Cond _ expr stmt) = do
+  --   generateLLVM (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition))
+
   generateLLVM (Cond _ expr stmt) = do
     (exprReg, exprRegType) <- generateLLVM expr
 
-    labelTrue <- getNextLabelAndIncrement -- empty blocks generation
+    labelTrue <- getNextLabelAndIncrement
     labelEnd <- getNextLabelAndIncrement
-    insertEmptyBasicBlock labelTrue
-    insertEmptyBasicBlock labelEnd
 
-    insertInstrToCurrBasicBlock $ IBr (EVReg exprReg) labelTrue labelEnd
+    addGenLLVM $ IBr (EVReg exprReg) labelTrue labelEnd
     currBB <- getCurrentBasicBlockLabel
 
     -- generate code for true branch
     addGenLLVM $ ILabel labelTrue
     oldState <- get
-    setPredecessorLabel currBB
+    insertEmptyBasicBlock labelTrue
     setcurrBasicBlockLabel labelTrue
     generateLLVM stmt
     newState <- get
@@ -252,82 +253,138 @@ instance Compiler Stmt where
 
     -- generate code for end of if statement - Phi. We should generate
     -- phi for all variables that were changed inside the if block
+    -- IMPORTANT - we need to track if there are changed declared variables
+    -- in potential inner blocks
+    insertEmptyBasicBlock labelEnd
+    setcurrBasicBlockLabel labelEnd
     addGenLLVM $ ILabel labelEnd
-    liftIO $ print $ varsChangedFromPredBlock (basicBlocks newState Map.! labelTrue)
-    liftIO $ print labelTrue
     mapM_
-      (\(ident, (reg, typ)) -> do
+      (\(ident, ((reg, typ), labelWhereInserted)) -> do
         (predReg, predType) <- lookupIdentRegisterAndTypeInOldState oldState ident
         liftIO $ print "GENERATING PHI"
         newReg <- getNextRegisterAndIncrement
-        addGenLLVM $ IPhi (EVReg newReg) predType (EVReg predReg, currBB) (EVReg reg, labelTrue)
+        addGenLLVM $ IPhi (EVReg newReg) predType (EVReg predReg, currBB) (EVReg reg, labelWhereInserted)
         insertIdentRegisterAndType ident newReg typ
+        insertVarChangedFromPredBlockToBlock currBB ident (newReg, typ) labelEnd
       )
       (Map.toList $ varsChangedFromPredBlock (basicBlocks newState Map.! labelTrue))
 
     return dummyReturnRegisterAndType
 
+
   generateLLVM (CondElse _ expr s1 s2) = do
+    --------------------------------------------------
+    -- 1) Generate code for the condition
+    --------------------------------------------------
     (exprReg, exprRegType) <- generateLLVM expr
 
+    --------------------------------------------------
+    -- 2) Allocate labels for True, False, and End
+    --------------------------------------------------
     labelTrue  <- getNextLabelAndIncrement
     labelFalse <- getNextLabelAndIncrement
     labelEnd   <- getNextLabelAndIncrement
-    insertEmptyBasicBlock labelTrue
-    insertEmptyBasicBlock labelFalse
-    insertEmptyBasicBlock labelEnd
 
-    insertInstrToCurrBasicBlock $ IBr (EVReg exprReg) labelTrue labelFalse
+    -- Emit the conditional branch from the current block
+    addGenLLVM $ IBr (EVReg exprReg) labelTrue labelFalse
     currBB <- getCurrentBasicBlockLabel
 
-    --  Generate branches
+    --------------------------------------------------
+    -- 3) The True branch
+    --------------------------------------------------
     addGenLLVM $ ILabel labelTrue
-    oldStateTrue <- get
-    setPredecessorLabel currBB
+    oldStateTrue <- get                          -- Save state before s1
+    insertEmptyBasicBlock labelTrue
     setcurrBasicBlockLabel labelTrue
-    generateLLVM s1
+    generateLLVM s1                              -- Generate code for 'then' statements
     newStateTrue <- get
-    addGenLLVM $ IBrJump labelEnd
+    addGenLLVM $ IBrJump labelEnd                -- Jump from True branch to End
 
+    --------------------------------------------------
+    -- 4) The False branch
+    --------------------------------------------------
     addGenLLVM $ ILabel labelFalse
-    oldStateFalse <- get
-    setPredecessorLabel currBB
+    oldStateFalse <- get                         -- Save state before s2
+    insertEmptyBasicBlock labelFalse
     setcurrBasicBlockLabel labelFalse
-    generateLLVM s2
+    generateLLVM s2                              -- Generate code for 'else' statements
     newStateFalse <- get
-    addGenLLVM $ IBrJump labelEnd 
+    addGenLLVM $ IBrJump labelEnd                -- Jump from False branch to End
 
-    -- Merge block + Phi nodes
+    --------------------------------------------------
+    -- 5) Merge block (labelEnd) + Phi nodes
+    --------------------------------------------------
+    insertEmptyBasicBlock labelEnd
+    setcurrBasicBlockLabel labelEnd
     addGenLLVM $ ILabel labelEnd
 
     -- Collect changed variables from both branches
     let changedVarsTrue  = varsChangedFromPredBlock (basicBlocks newStateTrue  Map.! labelTrue)
     let changedVarsFalse = varsChangedFromPredBlock (basicBlocks newStateFalse Map.! labelFalse)
+    -- Combine them so we know everything changed in either branch
     let allChanged       = Map.union changedVarsTrue changedVarsFalse
 
-    -- Generate a phi for each variable that differs in either branch
-    forM_ (Map.toList allChanged) $ \(ident, (_reg, typ)) -> do
-      liftIO $ print "GENERATING PHI"
+    --------------------------------------------------
+    -- For each variable changed in either branch:
+    --   1. Determine the "true branch" register & label
+    --   2. Determine the "false branch" register & label
+    --   3. Emit a Phi that merges them
+    --------------------------------------------------
+    mapM_
+      (\(ident, ((_, typ), _)) -> do
+         liftIO $ print "GENERATING PHI"
 
-      -- If 'ident' doesn't appear in changedVarsTrue, fetch it from oldStateTrue
-      (trueReg, trueTy) <- case Map.lookup ident changedVarsTrue of
-                             Just (r, t) -> return (r, t)
-                             Nothing     -> lookupIdentRegisterAndTypeInOldState oldStateTrue ident
+         -- Possibly changed in the True branch
+         case Map.lookup ident changedVarsTrue of
+           Just ((regT, _typT), lblT) -> do
+             -- We have (regT, typT) and the label where it was assigned
+             (regTrue, typTrue, labelTrueInsert) <-
+               pure (regT, typ, lblT)
+             -- Possibly changed in the False branch
+             case Map.lookup ident changedVarsFalse of
+               Just ((regF, _typF), lblF) -> do
+                 -- If also changed in the False branch
+                 newReg <- getNextRegisterAndIncrement
+                 addGenLLVM $
+                   IPhi (EVReg newReg) typ
+                        (EVReg regTrue,  labelTrueInsert)
+                        (EVReg regF,     lblF)
+                 insertIdentRegisterAndType ident newReg typ
+                 insertVarChangedFromPredBlockToBlock currBB ident (newReg, typ) labelEnd
+               Nothing -> do
+                 -- Not changed in the False branch => look up in oldStateFalse
+                 (oldRegF, oldTypeF) <- lookupIdentRegisterAndTypeInOldState oldStateFalse ident
+                 newReg <- getNextRegisterAndIncrement
+                 addGenLLVM $
+                   IPhi (EVReg newReg) typ
+                        (EVReg regTrue, labelTrueInsert)
+                        (EVReg oldRegF, currBB)  -- from oldStateFalse's predecessor
+                 insertIdentRegisterAndType ident newReg typ
+                 insertVarChangedFromPredBlockToBlock currBB ident (newReg, typ) labelEnd
 
-      -- If 'ident' doesn't appear in changedVarsFalse, fetch it from oldStateFalse
-      (falseReg, falseTy) <- case Map.lookup ident changedVarsFalse of
-                               Just (r, t) -> return (r, t)
-                               Nothing     -> lookupIdentRegisterAndTypeInOldState oldStateFalse ident
-
-      -- Create a new register for the merged value
-      newReg <- getNextRegisterAndIncrement
-      addGenLLVM $
-        IPhi (EVReg newReg) typ
-             (EVReg trueReg,  labelTrue)
-             (EVReg falseReg, labelFalse)
-      insertIdentRegisterAndType ident newReg typ
+           Nothing -> do
+             -- Not changed in the True branch => fetch from oldStateTrue
+             (oldRegT, oldTypeT) <- lookupIdentRegisterAndTypeInOldState oldStateTrue ident
+             -- Possibly changed in the False branch
+             case Map.lookup ident changedVarsFalse of
+               Just ((regF, _typF), lblF) -> do
+                 newReg <- getNextRegisterAndIncrement
+                 addGenLLVM $
+                   IPhi (EVReg newReg) typ
+                        (EVReg oldRegT, currBB)
+                        (EVReg regF,    lblF)
+                 insertIdentRegisterAndType ident newReg typ
+                 insertVarChangedFromPredBlockToBlock currBB ident (newReg, typ) labelEnd
+               Nothing -> do
+                 -- Not changed in either branch => no actual Phi needed
+                 -- (This scenario is rare if 'ident' is in allChanged, but
+                 --  it might happen if overshadowing or other logic sneaks in)
+                 pure ()
+      )
+      (Map.toList allChanged)
 
     return dummyReturnRegisterAndType
+
 
 
   generateLLVM (While _ expr stmt)         = undefined

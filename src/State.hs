@@ -21,7 +21,8 @@ data CompileState = CompileState
   , currBasicBlockLabel :: Label -- we need to know in which basic block we are currently so we can emit instructions to it
   , identToRegisterAndType :: Map Ident RegisterAndType
   , identToFunSig    :: Map Ident LLVMValue
-  , bbPredecessor    :: Label
+  , allInstructions  :: [Instr]
+  -- , bbPredecessor    :: Label
   }
 
 initialState :: CompileState
@@ -32,7 +33,8 @@ initialState = CompileState
   , currBasicBlockLabel = -1
   , identToRegisterAndType = Map.empty
   , identToFunSig = Map.empty
-  , bbPredecessor = -1
+  , allInstructions = []
+  -- , bbPredecessor = -1
   }
 
 type CompilerM a = StateT CompileState IO a
@@ -41,7 +43,7 @@ data BasicBlock = BasicBlock
   { bbLabel        :: Label
   , bbInstructions :: [Instr]
   , varsDeclaredInCurrBlock :: [Ident]
-  , varsChangedFromPredBlock :: Map Ident RegisterAndType
+  , varsChangedFromPredBlock :: Map Ident (RegisterAndType, Label)
   }
 
 emptyBasicBlock :: Label -> BasicBlock
@@ -98,13 +100,16 @@ addGenLLVM instr = do
   let bb = basicBlocks state
   let currBB = bb Map.! currLabel
   let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
-  put state { basicBlocks = Map.insert currLabel newBB bb }
+  put state { basicBlocks = Map.insert currLabel newBB bb, allInstructions = allInstructions state ++ [instr] }
 
-getPredecessorLabel :: CompilerM Label
-getPredecessorLabel = gets bbPredecessor
+getGenLLVM :: CompilerM [Instr]
+getGenLLVM = gets allInstructions
 
-setPredecessorLabel :: Label -> CompilerM ()
-setPredecessorLabel label = modify $ \st -> st { bbPredecessor = label }
+-- getPredecessorLabel :: CompilerM Label
+-- getPredecessorLabel = gets bbPredecessor
+
+-- setPredecessorLabel :: Label -> CompilerM ()
+-- setPredecessorLabel label = modify $ \st -> st { bbPredecessor = label }
 
 setcurrBasicBlockLabel :: Label -> CompilerM ()
 setcurrBasicBlockLabel label = modify $ \st -> st { currBasicBlockLabel = label }
@@ -156,8 +161,15 @@ insertVarChangedFromPredBlock ident regAndType = do
   let currLabel = currBasicBlockLabel state
   let bb = basicBlocks state
   let currBB = bb Map.! currLabel
-  let newBB = currBB { varsChangedFromPredBlock = Map.insert ident regAndType (varsChangedFromPredBlock currBB) }
+  let newBB = currBB { varsChangedFromPredBlock = Map.insert ident (regAndType, currLabel) (varsChangedFromPredBlock currBB) }
   put state { basicBlocks = Map.insert currLabel newBB bb }
+
+insertVarChangedFromPredBlockToBlock :: Label -> Ident -> (Register, LLVMType) -> Label -> StateT CompileState IO ()
+insertVarChangedFromPredBlockToBlock blockLabel ident regAndType label = do
+  bb <- getBasicBlockGenLLVM blockLabel
+  let newBB = bb { varsChangedFromPredBlock = Map.insert ident (regAndType, label) (varsChangedFromPredBlock bb) }
+  insertBasicBlock newBB
+
 
 isIdentInVarsDeclaredInCurrBlock :: Ident -> CompilerM Bool
 isIdentInVarsDeclaredInCurrBlock ident = do
