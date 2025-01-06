@@ -21,28 +21,25 @@ transIdent x = case x of
 
 transProgram :: Show a => Parser.Abs.Program' a -> Result
 transProgram x = case x of
-  Parser.Abs.IProgram _ topdefs -> failure x
+  Parser.Abs.Program _ topdefs -> failure x
 
 transTopDef :: Show a => Parser.Abs.TopDef' a -> Result
 transTopDef x = case x of
   Parser.Abs.FnDef _ type_ ident args block -> failure x
-  Parser.Abs.VarDef _ type_ ident expr -> failure x
 
 transArg :: Show a => Parser.Abs.Arg' a -> Result
 transArg x = case x of
-  Parser.Abs.IArg _ type_ ident -> failure x
-  Parser.Abs.VarArg _ type_ ident -> failure x
+  Parser.Abs.Arg _ type_ ident -> failure x
 
 transBlock :: Show a => Parser.Abs.Block' a -> Result
 transBlock x = case x of
-  Parser.Abs.IBlock _ stmts -> failure x
+  Parser.Abs.Block _ stmts -> failure x
 
 transStmt :: Show a => Parser.Abs.Stmt' a -> Result
 transStmt x = case x of
   Parser.Abs.Empty _ -> failure x
   Parser.Abs.BStmt _ block -> failure x
   Parser.Abs.Decl _ type_ items -> failure x
-  Parser.Abs.FVInit _ topdef -> failure x
   Parser.Abs.Ass _ ident expr -> failure x
   Parser.Abs.Incr _ ident -> failure x
   Parser.Abs.Decr _ ident -> failure x
@@ -56,6 +53,7 @@ transStmt x = case x of
 transItem :: Show a => Parser.Abs.Item' a -> Result
 transItem x = case x of
   Parser.Abs.NoInit _ ident -> failure x
+  Parser.Abs.Init _ ident expr -> failure x
 
 transType :: Show a => Parser.Abs.Type' a -> Result
 transType x = case x of
@@ -63,6 +61,7 @@ transType x = case x of
   Parser.Abs.Str _ -> failure x
   Parser.Abs.Bool _ -> failure x
   Parser.Abs.Void _ -> failure x
+  Parser.Abs.Fun _ type_ types -> failure x
 
 transExpr :: Show a => Parser.Abs.Expr' a -> Result
 transExpr x = case x of

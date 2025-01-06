@@ -35,8 +35,8 @@ The reserved words used in Parser are the following:
   | ``void`` | ``while`` |  |
 
 The symbols used in Parser are the following:
-  | ( | ) | = | ;
-  | , | { | } | ++
+  | ( | ) | , | {
+  | } | ; | = | ++
   | -- | - | ! | &&
   | || | + | * | /
   | % | < | <= | >
@@ -53,11 +53,9 @@ All other symbols are terminals.
 
   | //Program// | -> | //[TopDef]//
   | //TopDef// | -> | //Type// //Ident// ``(`` //[Arg]// ``)`` //Block//
-  |  |  **|**  | //Type// //Ident// ``=`` //Expr// ``;``
   | //[TopDef]// | -> | //TopDef//
   |  |  **|**  | //TopDef// //[TopDef]//
   | //Arg// | -> | //Type// //Ident//
-  |  |  **|**  | //Type// //Ident//
   | //[Arg]// | -> | **eps**
   |  |  **|**  | //Arg//
   |  |  **|**  | //Arg// ``,`` //[Arg]//
@@ -67,7 +65,6 @@ All other symbols are terminals.
   | //Stmt// | -> | ``;``
   |  |  **|**  | //Block//
   |  |  **|**  | //Type// //[Item]// ``;``
-  |  |  **|**  | //TopDef//
   |  |  **|**  | //Ident// ``=`` //Expr// ``;``
   |  |  **|**  | //Ident// ``++`` ``;``
   |  |  **|**  | //Ident// ``--`` ``;``
@@ -78,12 +75,16 @@ All other symbols are terminals.
   |  |  **|**  | ``while`` ``(`` //Expr// ``)`` //Stmt//
   |  |  **|**  | //Expr// ``;``
   | //Item// | -> | //Ident//
+  |  |  **|**  | //Ident// ``=`` //Expr//
   | //[Item]// | -> | //Item//
   |  |  **|**  | //Item// ``,`` //[Item]//
   | //Type// | -> | ``int``
   |  |  **|**  | ``string``
   |  |  **|**  | ``boolean``
   |  |  **|**  | ``void``
+  | //[Type]// | -> | **eps**
+  |  |  **|**  | //Type//
+  |  |  **|**  | //Type// ``,`` //[Type]//
   | //Expr6// | -> | //Ident//
   |  |  **|**  | //Integer//
   |  |  **|**  | ``true``

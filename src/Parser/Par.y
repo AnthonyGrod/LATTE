@@ -73,12 +73,11 @@ String   : L_quoted { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), ((\(P
 
 Program :: { (Parser.Abs.BNFC'Position, Parser.Abs.Program) }
 Program
-  : ListTopDef { (fst $1, Parser.Abs.IProgram (fst $1) (snd $1)) }
+  : ListTopDef { (fst $1, Parser.Abs.Program (fst $1) (snd $1)) }
 
 TopDef :: { (Parser.Abs.BNFC'Position, Parser.Abs.TopDef) }
 TopDef
   : Type Ident '(' ListArg ')' Block { (fst $1, Parser.Abs.FnDef (fst $1) (snd $1) (snd $2) (snd $4) (snd $6)) }
-  | Type Ident '=' Expr ';' { (fst $1, Parser.Abs.VarDef (fst $1) (snd $1) (snd $2) (snd $4)) }
 
 ListTopDef :: { (Parser.Abs.BNFC'Position, [Parser.Abs.TopDef]) }
 ListTopDef
@@ -87,8 +86,7 @@ ListTopDef
 
 Arg :: { (Parser.Abs.BNFC'Position, Parser.Abs.Arg) }
 Arg
-  : Type Ident { (fst $1, Parser.Abs.IArg (fst $1) (snd $1) (snd $2)) }
-  | Type Ident { (fst $1, Parser.Abs.VarArg (fst $1) (snd $1) (snd $2)) }
+  : Type Ident { (fst $1, Parser.Abs.Arg (fst $1) (snd $1) (snd $2)) }
 
 ListArg :: { (Parser.Abs.BNFC'Position, [Parser.Abs.Arg]) }
 ListArg
@@ -98,7 +96,7 @@ ListArg
 
 Block :: { (Parser.Abs.BNFC'Position, Parser.Abs.Block) }
 Block
-  : '{' ListStmt '}' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.IBlock (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
+  : '{' ListStmt '}' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.Block (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1)) (snd $2)) }
 
 ListStmt :: { (Parser.Abs.BNFC'Position, [Parser.Abs.Stmt]) }
 ListStmt
@@ -110,7 +108,6 @@ Stmt
   : ';' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.Empty (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1))) }
   | Block { (fst $1, Parser.Abs.BStmt (fst $1) (snd $1)) }
   | Type ListItem ';' { (fst $1, Parser.Abs.Decl (fst $1) (snd $1) (snd $2)) }
-  | TopDef { (fst $1, Parser.Abs.FVInit (fst $1) (snd $1)) }
   | Ident '=' Expr ';' { (fst $1, Parser.Abs.Ass (fst $1) (snd $1) (snd $3)) }
   | Ident '++' ';' { (fst $1, Parser.Abs.Incr (fst $1) (snd $1)) }
   | Ident '--' ';' { (fst $1, Parser.Abs.Decr (fst $1) (snd $1)) }
@@ -122,7 +119,9 @@ Stmt
   | Expr ';' { (fst $1, Parser.Abs.SExp (fst $1) (snd $1)) }
 
 Item :: { (Parser.Abs.BNFC'Position, Parser.Abs.Item) }
-Item : Ident { (fst $1, Parser.Abs.NoInit (fst $1) (snd $1)) }
+Item
+  : Ident { (fst $1, Parser.Abs.NoInit (fst $1) (snd $1)) }
+  | Ident '=' Expr { (fst $1, Parser.Abs.Init (fst $1) (snd $1) (snd $3)) }
 
 ListItem :: { (Parser.Abs.BNFC'Position, [Parser.Abs.Item]) }
 ListItem
@@ -135,6 +134,12 @@ Type
   | 'string' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.Str (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'boolean' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.Bool (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1))) }
   | 'void' { (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1), Parser.Abs.Void (uncurry Parser.Abs.BNFC'Position (tokenLineCol $1))) }
+
+ListType :: { (Parser.Abs.BNFC'Position, [Parser.Abs.Type]) }
+ListType
+  : {- empty -} { (Parser.Abs.BNFC'NoPosition, []) }
+  | Type { (fst $1, (:[]) (snd $1)) }
+  | Type ',' ListType { (fst $1, (:) (snd $1) (snd $3)) }
 
 Expr6 :: { (Parser.Abs.BNFC'Position, Parser.Abs.Expr) }
 Expr6

@@ -14,6 +14,9 @@ type RegisterAndType = (Register, LLVMType)
 showRegister :: Register -> String
 showRegister = ("%" ++) . show
 
+showLabel :: Label -> String  
+showLabel = ("Label" ++) . show
+
 dummyReturnRegisterAndType :: (Register, LLVMType)
 dummyReturnRegisterAndType = (0, TVVoid)
 
@@ -54,7 +57,7 @@ instance Show LLVMValue where
   show EVVoid = "void"
   show (EVFun retType ident args block) = show retType ++ " @" ++ show ident ++ "(" ++ show args ++ ") {\n" ++ show block ++ "\n}"
   show (EVLabel i) = "label %" ++ show i
-  show (EVReg i) = "%" ++ show i
+  show (EVReg i) = "%R" ++ show i
 
 getValueDefaultInit :: LLVMType -> LLVMValue
 getValueDefaultInit TVInt = EVInt 0
@@ -76,7 +79,7 @@ data Instr =
   IBr LLVMValue Label Label |
   IBrJump Label |
   ILabel Label |
-  IPhi LLVMValue (LLVMValue, Label) (LLVMValue, Label)
+  IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label)
 
 instance Show DBinOp where
   show BAdd = "add"
@@ -97,7 +100,7 @@ instance Show DRelOp where
 
 instance Show Instr where
   show (IFunPr (EVFun retType ident args block)) = 
-    "\ndefine " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ show args ++ ") {\n"
+    "\ndefine " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++  ") {\n" -- TODO args
   show IFunEp = "}"
   show (IFunRet val retType) = 
     "ret " ++ show retType ++ " " ++ show val
@@ -109,11 +112,13 @@ instance Show Instr where
       BOr -> show dest ++ " = or i1 " ++ show op1 ++ ", " ++ show op2
       _ -> show dest ++ " = " ++ show binOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
   show (IRelOp dest op1 op2 relOp) = 
-    show dest ++ " = " ++ show relOp ++ " i1 " ++ show op1 ++ ", " ++ show op2
-  show (ILabel label) = show label ++ ":"
+    show dest ++ " = " ++ show relOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
+  show (ILabel label) = showLabel label ++ ":"
   show (IBr cond trueLabel falseLabel) = 
-    "br i1 " ++ show cond ++ ", label %" ++ show trueLabel ++ ", label %" ++ show falseLabel
-  show (IBrJump label) = "br label %" ++ show label
-  show (IPhi reg (val1, label1) (val2, label2)) = 
-    "phi " ++ show reg ++ " [" ++ show val1 ++ ", %" ++ show label1 ++ "], [" ++ show val2 ++ ", %" ++ show label2 ++ "]"
+    "br i1 " ++ show cond ++ ", label %" ++ showLabel trueLabel ++ ", label %" ++ showLabel falseLabel
+  show (IBrJump label) = "br label %" ++ showLabel label
+  show (IPhi lhsReg typ (val1, label1) (val2, label2)) = 
+    show lhsReg ++ " = phi " ++ show typ ++ " [" ++ show val1 ++ ", %" 
+    ++ showLabel label1 ++ "], [" ++ show val2 ++ ", %" 
+    ++ showLabel label2 ++ "]"
   show _ = "+++++++++"

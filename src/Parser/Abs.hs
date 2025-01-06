@@ -19,21 +19,19 @@ import qualified Prelude as C
 import qualified Data.String
 
 type Program = Program' BNFC'Position
-data Program' a = IProgram a [TopDef' a]
+data Program' a = Program a [TopDef' a]
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type TopDef = TopDef' BNFC'Position
-data TopDef' a
-    = FnDef a (Type' a) Ident [Arg' a] (Block' a)
-    | VarDef a (Type' a) Ident (Expr' a)
+data TopDef' a = FnDef a (Type' a) Ident [Arg' a] (Block' a)
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Arg = Arg' BNFC'Position
-data Arg' a = IArg a (Type' a) Ident | VarArg a (Type' a) Ident
+data Arg' a = Arg a (Type' a) Ident
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Block = Block' BNFC'Position
-data Block' a = IBlock a [Stmt' a]
+data Block' a = Block a [Stmt' a]
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Stmt = Stmt' BNFC'Position
@@ -41,7 +39,6 @@ data Stmt' a
     = Empty a
     | BStmt a (Block' a)
     | Decl a (Type' a) [Item' a]
-    | FVInit a (TopDef' a)
     | Ass a Ident (Expr' a)
     | Incr a Ident
     | Decr a Ident
@@ -54,11 +51,12 @@ data Stmt' a
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Item = Item' BNFC'Position
-data Item' a = NoInit a Ident
+data Item' a = NoInit a Ident | Init a Ident (Expr' a)
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Type = Type' BNFC'Position
-data Type' a = Int a | Str a | Bool a | Void a
+data Type' a
+    = Int a | Str a | Bool a | Void a | Fun a (Type' a) [Type' a]
   deriving (C.Eq, C.Ord, C.Show, C.Read, C.Functor, C.Foldable, C.Traversable)
 
 type Expr = Expr' BNFC'Position
@@ -110,28 +108,25 @@ class HasPosition a where
 
 instance HasPosition Program where
   hasPosition = \case
-    IProgram p _ -> p
+    Program p _ -> p
 
 instance HasPosition TopDef where
   hasPosition = \case
     FnDef p _ _ _ _ -> p
-    VarDef p _ _ _ -> p
 
 instance HasPosition Arg where
   hasPosition = \case
-    IArg p _ _ -> p
-    VarArg p _ _ -> p
+    Arg p _ _ -> p
 
 instance HasPosition Block where
   hasPosition = \case
-    IBlock p _ -> p
+    Block p _ -> p
 
 instance HasPosition Stmt where
   hasPosition = \case
     Empty p -> p
     BStmt p _ -> p
     Decl p _ _ -> p
-    FVInit p _ -> p
     Ass p _ _ -> p
     Incr p _ -> p
     Decr p _ -> p
@@ -145,6 +140,7 @@ instance HasPosition Stmt where
 instance HasPosition Item where
   hasPosition = \case
     NoInit p _ -> p
+    Init p _ _ -> p
 
 instance HasPosition Type where
   hasPosition = \case
@@ -152,6 +148,7 @@ instance HasPosition Type where
     Str p -> p
     Bool p -> p
     Void p -> p
+    Fun p _ _ -> p
 
 instance HasPosition Expr where
   hasPosition = \case
