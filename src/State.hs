@@ -114,8 +114,8 @@ getGenLLVM = gets allInstructions
 setcurrBasicBlockLabel :: Label -> CompilerM ()
 setcurrBasicBlockLabel label = modify $ \st -> st { currBasicBlockLabel = label }
 
-getBasicBlockGenLLVM :: Label -> CompilerM BasicBlock
-getBasicBlockGenLLVM label = do
+getBasicBlock :: Label -> CompilerM BasicBlock
+getBasicBlock label = do
   state <- get
   return $ basicBlocks state Map.! label
 
@@ -131,9 +131,26 @@ insertBasicBlock bb = do
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
 
+insertEmptyBasicBlockWithCopiedVars :: Label -> CompilerM ()
+insertEmptyBasicBlockWithCopiedVars label = do
+  state <- get
+  let currLabel = currBasicBlockLabel state
+  let bb = basicBlocks state
+  let currBB = bb Map.! currLabel
+  let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB
+                                      , varsChangedFromPredBlock = varsChangedFromPredBlock currBB }
+  insertBasicBlock newBB
+
+insertEmptyBasicBlockWithCopiedVarsFromBlock :: Label -> Label -> CompilerM ()
+insertEmptyBasicBlockWithCopiedVarsFromBlock label blockLabel = do
+  bb <- getBasicBlock blockLabel
+  let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock bb
+                                      , varsChangedFromPredBlock = varsChangedFromPredBlock bb }
+  insertBasicBlock newBB
+
 insertInstrToBasicBlock :: Label -> Instr -> CompilerM ()
 insertInstrToBasicBlock label instr = do
-  bb <- getBasicBlockGenLLVM label
+  bb <- getBasicBlock label
   let newBB = bb { bbInstructions = bbInstructions bb ++ [instr] }
   insertBasicBlock newBB
 
@@ -166,7 +183,7 @@ insertVarChangedFromPredBlock ident regAndType = do
 
 insertVarChangedFromPredBlockToBlock :: Label -> Ident -> (Register, LLVMType) -> Label -> StateT CompileState IO ()
 insertVarChangedFromPredBlockToBlock blockLabel ident regAndType label = do
-  bb <- getBasicBlockGenLLVM blockLabel
+  bb <- getBasicBlock blockLabel
   let newBB = bb { varsChangedFromPredBlock = Map.insert ident (regAndType, label) (varsChangedFromPredBlock bb) }
   insertBasicBlock newBB
 
