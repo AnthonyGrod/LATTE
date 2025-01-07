@@ -2,10 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module State where
+module Utils.State where
 
-import Types
-import Aux
+import Utils.Types
+import Utils.Aux
 import Parser.Abs
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -42,16 +42,16 @@ type CompilerM a = StateT CompileState IO a
 data BasicBlock = BasicBlock
   { bbLabel        :: Label
   , bbInstructions :: [Instr]
-  , varsDeclaredInCurrBlock :: [Ident]
-  , varsChangedFromPredBlock :: Map Ident (RegisterAndType, Label)
+  -- , varsDeclaredInCurrBlock :: [Ident]
+  -- , varsChangedFromPredBlock :: Map Ident (RegisterAndType, Label)
   }
 
 emptyBasicBlock :: Label -> BasicBlock
 emptyBasicBlock label = BasicBlock
   { bbLabel = label
   , bbInstructions = []
-  , varsDeclaredInCurrBlock = []
-  , varsChangedFromPredBlock = Map.empty
+  -- , varsDeclaredInCurrBlock = []
+  -- , varsChangedFromPredBlock = Map.empty
   }
 
 
@@ -131,22 +131,22 @@ insertBasicBlock bb = do
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
 
-insertEmptyBasicBlockWithCopiedVars :: Label -> CompilerM ()
-insertEmptyBasicBlockWithCopiedVars label = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB
-                                      , varsChangedFromPredBlock = varsChangedFromPredBlock currBB }
-  insertBasicBlock newBB
+-- insertEmptyBasicBlockWithCopiedVars :: Label -> CompilerM ()
+-- insertEmptyBasicBlockWithCopiedVars label = do
+--   state <- get
+--   let currLabel = currBasicBlockLabel state
+--   let bb = basicBlocks state
+--   let currBB = bb Map.! currLabel
+--   let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB
+--                                       , varsChangedFromPredBlock = varsChangedFromPredBlock currBB }
+--   insertBasicBlock newBB
 
-insertEmptyBasicBlockWithCopiedVarsFromBlock :: Label -> Label -> CompilerM ()
-insertEmptyBasicBlockWithCopiedVarsFromBlock label blockLabel = do
-  bb <- getBasicBlock blockLabel
-  let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock bb
-                                      , varsChangedFromPredBlock = varsChangedFromPredBlock bb }
-  insertBasicBlock newBB
+-- insertEmptyBasicBlockWithCopiedVarsFromBlock :: Label -> Label -> CompilerM ()
+-- insertEmptyBasicBlockWithCopiedVarsFromBlock label blockLabel = do
+--   bb <- getBasicBlock blockLabel
+--   let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock bb
+--                                       , varsChangedFromPredBlock = varsChangedFromPredBlock bb }
+--   insertBasicBlock newBB
 
 insertInstrToBasicBlock :: Label -> Instr -> CompilerM ()
 insertInstrToBasicBlock label instr = do
@@ -163,36 +163,36 @@ insertInstrToCurrBasicBlock instr = do
   let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
   put state { basicBlocks = Map.insert currLabel newBB bb }
 
-insertVarDeclaredInCurrBlock :: Ident -> CompilerM ()
-insertVarDeclaredInCurrBlock ident = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  let newBB = currBB { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB ++ [ident] }
-  put state { basicBlocks = Map.insert currLabel newBB bb }
+-- insertVarDeclaredInCurrBlock :: Ident -> CompilerM ()
+-- insertVarDeclaredInCurrBlock ident = do
+--   state <- get
+--   let currLabel = currBasicBlockLabel state
+--   let bb = basicBlocks state
+--   let currBB = bb Map.! currLabel
+--   let newBB = currBB { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB ++ [ident] }
+--   put state { basicBlocks = Map.insert currLabel newBB bb }
 
-insertVarChangedFromPredBlock :: Ident -> RegisterAndType -> CompilerM ()
-insertVarChangedFromPredBlock ident regAndType = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  let newBB = currBB { varsChangedFromPredBlock = Map.insert ident (regAndType, currLabel) (varsChangedFromPredBlock currBB) }
-  put state { basicBlocks = Map.insert currLabel newBB bb }
+-- insertVarChangedFromPredBlock :: Ident -> RegisterAndType -> CompilerM ()
+-- insertVarChangedFromPredBlock ident regAndType = do
+--   state <- get
+--   let currLabel = currBasicBlockLabel state
+--   let bb = basicBlocks state
+--   let currBB = bb Map.! currLabel
+--   let newBB = currBB { varsChangedFromPredBlock = Map.insert ident (regAndType, currLabel) (varsChangedFromPredBlock currBB) }
+--   put state { basicBlocks = Map.insert currLabel newBB bb }
 
-insertVarChangedFromPredBlockToBlock :: Label -> Ident -> (Register, LLVMType) -> Label -> StateT CompileState IO ()
-insertVarChangedFromPredBlockToBlock blockLabel ident regAndType label = do
-  bb <- getBasicBlock blockLabel
-  let newBB = bb { varsChangedFromPredBlock = Map.insert ident (regAndType, label) (varsChangedFromPredBlock bb) }
-  insertBasicBlock newBB
+-- insertVarChangedFromPredBlockToBlock :: Label -> Ident -> RegisterAndType -> Label -> CompilerM ()
+-- insertVarChangedFromPredBlockToBlock blockLabel ident regAndType label = do
+--   bb <- getBasicBlock blockLabel
+--   let newBB = bb { varsChangedFromPredBlock = Map.insert ident (regAndType, label) (varsChangedFromPredBlock bb) }
+--   insertBasicBlock newBB
 
 
-isIdentInVarsDeclaredInCurrBlock :: Ident -> CompilerM Bool
-isIdentInVarsDeclaredInCurrBlock ident = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  return $ elem ident (varsDeclaredInCurrBlock currBB)
+-- isIdentInVarsDeclaredInCurrBlock :: Ident -> CompilerM Bool
+-- isIdentInVarsDeclaredInCurrBlock ident = do
+--   state <- get
+--   let currLabel = currBasicBlockLabel state
+--   let bb = basicBlocks state
+--   let currBB = bb Map.! currLabel
+--   return $ elem ident (varsDeclaredInCurrBlock currBB)
 

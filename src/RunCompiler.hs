@@ -1,10 +1,10 @@
-module Interpreter (interpretWithStdin, interpretWithFile, interpret) where
+module RunCompiler (interpretWithStdin, interpretWithFile, interpret) where
 
 import Prelude
-import Typechecker.Typechecker
+import Frontend.Frontend
 import Parser.Par
 import Parser.Abs
-import Backend
+import Compiler.Backend
 
 interpretWithStdin :: String -> IO ()
 interpretWithStdin = interpret

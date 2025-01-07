@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Typechecker.Typechecker where
+module Frontend.Frontend where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Map (Map)

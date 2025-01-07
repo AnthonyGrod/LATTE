@@ -2,10 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Types where
+module Utils.Types where
 
 import Parser.Abs
-import Aux
+import Utils.Aux
 
 type Label = Int
 type Register = Int
@@ -14,13 +14,13 @@ type RegisterAndType = (Register, LLVMType)
 showRegister :: Register -> String
 showRegister = ("%" ++) . show
 
-showLabel :: Label -> String  
+showLabel :: Label -> String
 showLabel = ("Label" ++) . show
 
 dummyReturnRegisterAndType :: (Register, LLVMType)
 dummyReturnRegisterAndType = (0, TVVoid)
 
-data LLVMValue = 
+data LLVMValue =
   EVInt Int |
   EVBool Bool |
   EVString String |
@@ -70,16 +70,17 @@ data DBinOp = BAdd | BSub | BMul | BDiv | BMod | BAnd | BOr
 data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE
 
 data Instr =
-  IFunPr LLVMValue |           -- function definition (ret type + name + args)
+  IFunPr LLVMType Ident [LLVMType] |           -- function definition (ret type + name + args)
   IAss   LLVMValue LLVMValue | -- assign Reg = Value
   IBinOp LLVMValue LLVMValue LLVMValue DBinOp | -- binary operation
   IRelOp LLVMValue LLVMValue LLVMValue DRelOp | -- relational operation
-  IFunEp |
+  IFunEp  |
   IFunRet LLVMValue LLVMType |
   IBr LLVMValue Label Label |
   IBrJump Label |
   ILabel Label |
-  IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label)
+  IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label) |
+  FunCall LLVMType Ident [(LLVMType, LLVMValue)]
 
 instance Show DBinOp where
   show BAdd = "add"
@@ -99,26 +100,30 @@ instance Show DRelOp where
   show RE = "icmp ne"
 
 instance Show Instr where
-  show (IFunPr (EVFun retType ident args block)) = 
-    "\ndefine " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++  ") {\n" -- TODO args
+  show (IFunPr retType ident args) =
+    "define " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
+      [] -> ") {"
+      _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ") {"
   show IFunEp = "}"
-  show (IFunRet val retType) = 
+  show (IFunRet val retType) =
     "ret " ++ show retType ++ " " ++ show val
-  show (IAss reg val) = 
+  show (IAss reg val) =
     show reg ++ " = " ++ show val
-  show (IBinOp dest op1 op2 binOp) = 
+  show (IBinOp dest op1 op2 binOp) =
     case binOp of
       BAnd -> show dest ++ " = and i1 " ++ show op1 ++ ", " ++ show op2
       BOr -> show dest ++ " = or i1 " ++ show op1 ++ ", " ++ show op2
       _ -> show dest ++ " = " ++ show binOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
-  show (IRelOp dest op1 op2 relOp) = 
+  show (IRelOp dest op1 op2 relOp) =
     show dest ++ " = " ++ show relOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
   show (ILabel label) = showLabel label ++ ":"
-  show (IBr cond trueLabel falseLabel) = 
+  show (IBr cond trueLabel falseLabel) =
     "br i1 " ++ show cond ++ ", label %" ++ showLabel trueLabel ++ ", label %" ++ showLabel falseLabel
   show (IBrJump label) = "br label %" ++ showLabel label
-  show (IPhi lhsReg typ (val1, label1) (val2, label2)) = 
-    show lhsReg ++ " = phi " ++ show typ ++ " [" ++ show val1 ++ ", %" 
-    ++ showLabel label1 ++ "], [" ++ show val2 ++ ", %" 
+  show (IPhi lhsReg typ (val1, label1) (val2, label2)) =
+    show lhsReg ++ " = phi " ++ show typ ++ " [" ++ show val1 ++ ", %"
+    ++ showLabel label1 ++ "], [" ++ show val2 ++ ", %"
     ++ showLabel label2 ++ "]"
+  show (FunCall retType ident args) =
+    "call " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ show args ++ ")"
   show _ = "+++++++++"

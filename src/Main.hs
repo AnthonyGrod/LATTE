@@ -1,7 +1,7 @@
 module Main where
 
 import Prelude 
-import Interpreter
+import RunCompiler
 import System.Environment
 
 main = do

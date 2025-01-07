@@ -2,10 +2,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Aux where
+module Utils.Aux where
 
 import Parser.Abs
 
 
 extractIdent :: Ident -> String
 extractIdent (Ident s) = s
+
+extractIdentFromItem :: Item -> Ident
+extractIdentFromItem (NoInit _ ident) = ident
+extractIdentFromItem (Init _ ident _) = ident
