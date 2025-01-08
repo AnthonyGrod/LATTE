@@ -23,7 +23,8 @@ import Data.Map.Internal.Debug (node)
 
 
 -- TODO: 
--- if in while
+-- if in while DONE
+-- decl WITH INIT in block
 -- function calls
 -- print
 -- read
@@ -210,8 +211,8 @@ generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
             insertIdentRegisterAndType ident reg llvmItemsType
             return (innerAcc ++ [ident], outerAcc)
           else do
-            (innerAcc', outerAcc') <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (innerAcc, outerAcc)
-            return (innerAcc' ++ [ident], outerAcc')
+            (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (innerAcc, outerAcc)
+            return (innerAcc ++ [ident], outerAcc)
     )
     (inner, outer)
     items
