@@ -23,8 +23,11 @@ import Data.Map.Internal.Debug (node)
 
 
 -- TODO: 
+-- while DONE
 -- if in while DONE
--- decl WITH INIT in block
+-- decl WITH INIT in block DONE
+-- while with very simple body DONE
+-- decrement and increment
 -- function calls
 -- print
 -- read
@@ -172,11 +175,12 @@ generateLLVMExpr (EApp _ ident exprs) = do
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
     (identReg, identRegType) <- lookupIdentRegisterAndType ident
-    newReg <- getNextRegisterAndIncrement
-    addGenLLVM $ IBinOp (EVReg newReg) (EVReg identReg) (EVInt 1) op
-    insertIdentRegisterAndType ident newReg identRegType
-    return (newReg, identRegType)
-
+    oneConstReg <- getNextRegisterAndIncrement
+    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
+    resultReg <- getNextRegisterAndIncrement
+    addGenLLVM $ IBinOp (EVReg resultReg) (EVReg identReg) (EVReg oneConstReg) op
+    insertIdentRegisterAndType ident resultReg identRegType
+    return (resultReg, identRegType)
 
 -- inner - list of variables already declared in the current block
 -- outer - map of variables that were declared in the outer block and now changed in the current block
@@ -238,12 +242,17 @@ generateLLVMStmt (BStmt _ block) (inner, outer) = do
   return (inner, Map.union out outer)
 
 generateLLVMStmt (Incr _ ident) (inner, outer) = do
-  generateIncDec ident BAdd
-  return (inner, outer)
+  (reg, regType) <- generateIncDec ident BAdd
+  if ident `elem` inner
+    then return (inner, outer)
+    else return (inner, Map.insert ident (reg, regType) outer)
 
 generateLLVMStmt (Decr _ ident) (inner, outer) = do -- TODO: needs changing outer
-  generateIncDec ident BSub
-  return (inner, outer)
+  -- we need to change outer if the variable was declared in the outer block
+  (reg, regType) <- generateIncDec ident BSub
+  if ident `elem` inner
+    then return (inner, outer)
+    else return (inner, Map.insert ident (reg, regType) outer)
 
 generateLLVMStmt (SExp _ expr) (inner, outer) = do
   return (inner, outer)
@@ -324,6 +333,10 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
   return (inner, Map.union phiMap outer)
 
+
+
+
+
 generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   oldState <- get
   oldRegisterAndTypeMap <- gets identToRegisterAndType
@@ -393,8 +406,17 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   insertEmptyBasicBlock labelBody
   setcurrBasicBlockLabel labelBody
   addGenLLVM $ ILabel labelBody
+  
+  -- insert state variables by phi
+  forM_ phiRes $ \(ident, (reg, t)) -> do
+    insertIdentRegisterAndType ident reg t
+
   (_, _) <- generateLLVMStmt stmt ([], Map.empty)
   addGenLLVM $ IBr (EVReg expr) labelBefore labelEnd
+
+  -- insert state variables by phi - not sure
+  forM_ phiRes $ \(ident, (reg, t)) -> do
+    insertIdentRegisterAndType ident reg t
 
   insertEmptyBasicBlock labelEnd
   setcurrBasicBlockLabel labelEnd
@@ -404,13 +426,8 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   --print current register number
   liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
 
-  -- insert state variables by phi
-  forM_ phiRes $ \(ident, (reg, t)) -> do
-    insertIdentRegisterAndType ident reg t
-
   -- set register counter to expr + 1
   modify $ \s -> s { nextFreeRegNum = expr + 1 }
-  -- set label counter to labelEnd + 1
 
   return (inner, Map.union (Map.fromList phiRes) outer)
   
