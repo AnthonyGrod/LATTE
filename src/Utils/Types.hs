@@ -25,9 +25,10 @@ data LLVMValue =
   EVBool Bool |
   EVString String |
   EVVoid |
-  EVFun LLVMType Ident [Arg] Block |
+  EVFun LLVMType Ident [(LLVMType, LLVMValue)] Block | -- return type + name + (arg type, arg register) + block
   EVLabel Int |
   EVReg Int
+  deriving (Eq)
 
 data LLVMType =
   TVInt |
@@ -35,6 +36,7 @@ data LLVMType =
   TVString |
   TVVoid |
   TVLabel
+  deriving (Eq)
 
 bnfcTypeToLLVMType :: Type -> LLVMType
 bnfcTypeToLLVMType (Int _) = TVInt
@@ -66,11 +68,11 @@ getValueDefaultInit TVString = EVString ""
 getValueDefaultInit TVVoid = EVVoid
 getValueDefaultInit TVLabel = EVLabel 0
 
-data DBinOp = BAdd | BSub | BMul | BDiv | BMod | BAnd | BOr
-data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE
+data DBinOp = BAdd | BSub | BMul | BDiv | BMod | BAnd | BOr deriving (Eq)
+data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE deriving (Eq)
 
 data Instr =
-  IFunPr LLVMType Ident [LLVMType] |           -- function definition (ret type + name + args)
+  IFunPr LLVMType Ident [(LLVMType, LLVMValue)] |           -- function definition (ret type + name + [(arg type, arg register)])
   IAss   LLVMValue LLVMValue | -- assign Reg = Value
   IBinOp LLVMValue LLVMValue LLVMValue DBinOp | -- binary operation
   IRelOp LLVMValue LLVMValue LLVMValue DRelOp | -- relational operation
@@ -80,7 +82,8 @@ data Instr =
   IBrJump Label |
   ILabel Label |
   IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label) |
-  FunCall LLVMType Ident [(LLVMType, LLVMValue)]
+  IFunCall LLVMValue LLVMType Ident [(LLVMType, LLVMValue)]
+  deriving (Eq)
 
 instance Show DBinOp where
   show BAdd = "add"
@@ -103,7 +106,7 @@ instance Show Instr where
   show (IFunPr retType ident args) =
     "define " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
       [] -> ") {"
-      _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ") {"
+      _  -> concatMap (\arg -> show (fst arg) ++ " " ++ show (snd arg) ++ ", ") (init args) ++ show (fst (last args)) ++ " " ++ show (snd (last args)) ++ ") {"
   show IFunEp = "}"
   show (IFunRet val retType) =
     "ret " ++ show retType ++ " " ++ show val
@@ -124,6 +127,8 @@ instance Show Instr where
     show lhsReg ++ " = phi " ++ show typ ++ " [" ++ show val1 ++ ", %"
     ++ showLabel label1 ++ "], [" ++ show val2 ++ ", %"
     ++ showLabel label2 ++ "]"
-  show (FunCall retType ident args) =
-    "call " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ show args ++ ")"
+  show (IFunCall reg retType ident args) =
+    show reg ++ " = call " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
+      [] -> ")"
+      _  -> concatMap (\arg -> show (fst arg) ++ " " ++ show (snd arg) ++ ", ") (init args) ++ show (fst (last args)) ++ " " ++ show (snd (last args)) ++ ")"
   show _ = "+++++++++"

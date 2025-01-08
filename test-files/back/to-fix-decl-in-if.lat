@@ -1,0 +1,8 @@
+int main() {
+  int x = 90;
+  if (x > 0) {
+    int z = 3;
+    x = z;
+  }
+  return x;
+}

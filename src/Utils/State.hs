@@ -37,6 +37,10 @@ initialState = CompileState
   -- , bbPredecessor = -1
   }
 
+-- write a function that sets identToRegisterAndType to empty
+setIdentToRegisterAndTypeToEmpty :: CompileState -> CompileState
+setIdentToRegisterAndTypeToEmpty state = state { identToRegisterAndType = Map.empty }
+
 type CompilerM a = StateT CompileState IO a
 
 data BasicBlock = BasicBlock

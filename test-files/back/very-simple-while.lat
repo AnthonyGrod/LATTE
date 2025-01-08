@@ -1,7 +1,14 @@
 int main() {
   int x = 58;
+  int y = 0;
   while (x > 45) {
-    x = 30;
+    y = 88;
+    int z;
+    int a = 9;
+    if (x > 30) {
+      x = z;
+    }
   }
-  return x;
+
+  return x + y;
 }

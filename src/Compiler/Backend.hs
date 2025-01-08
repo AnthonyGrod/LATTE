@@ -17,7 +17,7 @@ import Control.Monad.Identity
 import GHC.TopHandler (runIO)
 
 import qualified Data.List.Unique as LU
-import Data.List as L
+import qualified Data.List as L
 import Debug.Trace
 import Data.Map.Internal.Debug (node)
 
@@ -27,7 +27,7 @@ import Data.Map.Internal.Debug (node)
 -- if in while DONE
 -- decl WITH INIT in block DONE
 -- while with very simple body DONE
--- decrement and increment
+-- decrement and increment DONE
 -- function calls
 -- print
 -- read
@@ -51,23 +51,35 @@ generateLLVMProgram (Program _ topDefs) = do
 generateLLVMTopDef :: TopDef -> CompilerM RegisterAndType
 generateLLVMTopDef (FnDef _ retType ident args block) = do
   let argTypes = map (\(Arg _ t _) -> t) args
-  let funValue = EVFun (bnfcTypeToLLVMType retType) ident args block
+  liftIO $ print $ "argTypes: " ++ show argTypes
+  -- reserve registers for arguments
+  argTypeRegPairs <- foldM (\acc (Arg _ t ident) -> do
+    reg <- getNextRegisterAndIncrement
+    insertIdentRegisterAndType ident reg (bnfcTypeToLLVMType t)
+    return $ acc ++ [(bnfcTypeToLLVMType t, EVReg reg)]
+    ) [] args
+
+  let funValue = EVFun (bnfcTypeToLLVMType retType) ident argTypeRegPairs block
   modify $ \s -> s { identToFunSig = Map.insert ident funValue (identToFunSig s) }
   label <- getNextLabelAndIncrement -- get new label for function
   modify $ \s -> s { currBasicBlockLabel = label }
   insertEmptyBasicBlock label
-  addGenLLVM $ IFunPr (bnfcTypeToLLVMType retType) ident (map bnfcTypeToLLVMType argTypes)
+  addGenLLVM $ IFunPr (bnfcTypeToLLVMType retType) ident argTypeRegPairs
   addGenLLVM $ ILabel label
   _ <- generateLLVMBlock block
   addGenLLVM IFunEp
+  state <- get
+  put $ setIdentToRegisterAndTypeToEmpty state
   return dummyReturnRegisterAndType
 
-generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType)
+
+generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType) -- TODO: Reduce
 generateLLVMBlock (Block _ stmts) = do
   let comp = \(inner, outer) -> \s -> generateLLVMStmt s (inner, outer)
   (_, res) <- foldM comp ([], Map.empty) stmts
   liftIO $ print $ "res: " ++ show res
   return res
+
 
 generateLLVMExpr :: Expr -> CompilerM RegisterAndType
 generateLLVMExpr (EVar _ ident) = do
@@ -160,17 +172,35 @@ generateLLVMExpr (EOr _ expr1 expr2) = do
 generateLLVMExpr (EApp _ ident exprs) = do
   identToFunSig <- gets identToFunSig
   oldState <- get
+  oldGenInstrFromCurrBlock <- getBasicBlockGenLLVM (currBasicBlockLabel oldState)
+  oldRegNum <- gets nextFreeRegNum
+
+  -- What to do:
+  -- 1. Preserve the old state and generate expressions that will be args
+  -- 2. Get function argument types and var names
+  -- 3. Get a brand new state (almost empty, but with functions)
+  -- 4. Write to this state args with values 
 
   let funSig = identToFunSig Map.! ident
   regAndTypes <- mapM generateLLVMExpr exprs
-  let (EVFun retType _ args block) = funSig
-  let argTypes = map (\(Arg _ t _) -> t) args
-  let argNames = map (\(Arg _ _ ident) -> ident) args
-  let argNamesWithTypes = zip argNames argTypes
-  let argNamesWithTypes' = zip argNames regAndTypes
 
-  return dummyReturnRegisterAndType
--- add new env
+  newGenInstrFromCurrBlock <- getBasicBlockGenLLVM (currBasicBlockLabel oldState)
+  let generatedInstrs = newGenInstrFromCurrBlock L.\\ oldGenInstrFromCurrBlock
+  newRegNum <- gets nextFreeRegNum
+
+  let (EVFun retType _ argTypeRegs block) = funSig
+
+  -- call the function
+  put oldState
+  let howMuchToIncrement = newRegNum - oldRegNum
+  -- increment register counter by the number of registers used in generating exprs
+  modify $ \s -> s { nextFreeRegNum = oldRegNum + howMuchToIncrement }
+  regForFunRes <- getNextRegisterAndIncrement
+  mapM_ addGenLLVM generatedInstrs
+  addGenLLVM $ IFunCall (EVReg regForFunRes) retType ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
+  return (regForFunRes, retType)
+
+
 
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
@@ -182,8 +212,10 @@ generateIncDec ident op = do
     insertIdentRegisterAndType ident resultReg identRegType
     return (resultReg, identRegType)
 
+
 -- inner - list of variables already declared in the current block
 -- outer - map of variables that were declared in the outer block and now changed in the current block
+-- TODO: change inner and outer names
 generateLLVMStmt :: Stmt -> ([Ident], Map Ident RegisterAndType) -> CompilerM ([Ident], Map Ident RegisterAndType)
 generateLLVMStmt (Ass _ ident expr) (inner, outer) = do
   _ <- trace ("ASsing inner: " ++ show inner ++ " ASsing outer: " ++ show outer) $ return ([], Map.empty)
