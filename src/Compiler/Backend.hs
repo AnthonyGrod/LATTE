@@ -334,6 +334,8 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   labelBody <- getNextLabelAndIncrement
   labelEnd <- getNextLabelAndIncrement
 
+  insertEmptyBasicBlock labelBody -- might not be the best idea but works for now
+  setcurrBasicBlockLabel labelBody
   (inner', outer') <- generateLLVMStmt stmt ([], Map.empty)
   endingBodyLabel <- getCurrentBasicBlockLabel
   liftIO $ print $ "----outer----: " ++ show outer
