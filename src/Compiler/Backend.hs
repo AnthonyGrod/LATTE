@@ -22,13 +22,14 @@ import Debug.Trace
 import Data.Map.Internal.Debug (node)
 
 
-
 -- TODO: 
--- phi (variable overshadowing)
+-- if in while
 -- function calls
--- if, if else, while
--- block
--- read, print
+-- print
+-- read
+-- string manipulation
+-- lazy evaluation
+-- returns in if
 
 
 runCompiler :: Program -> IO RegisterAndType
@@ -333,6 +334,7 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   labelEnd <- getNextLabelAndIncrement
 
   (inner', outer') <- generateLLVMStmt stmt ([], Map.empty)
+  endingBodyLabel <- getCurrentBasicBlockLabel
   liftIO $ print $ "----outer----: " ++ show outer
   -- print current next register number
   liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
@@ -349,7 +351,7 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
     r' <- getNextRegisterAndIncrement
     liftIO $ print $ "----r'----: " ++ show r'
     let (oldRegister, _) = oldRegisterAndTypeMap Map.! ident
-    addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currLabel) (EVReg reg, labelBody)
+    addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currLabel) (EVReg reg, endingBodyLabel)
     insertIdentRegisterAndType ident r' t
     return (ident, (r', t))
 
@@ -368,6 +370,8 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   liftIO $ print $ "----instrCondAcc----: " ++ show instrCondAcc
 
   put oldState -- restore state before the loop
+  modify $ \s -> s { nextFreeLabelNum = labelEnd + 1 }
+  -- increment label count by 2 because of the before and cond labels that already exist
 
   -- insert labelBefore and labelCond blocks again along with their instructions
   insertEmptyBasicBlock labelBefore
@@ -400,6 +404,10 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   -- insert state variables by phi
   forM_ phiRes $ \(ident, (reg, t)) -> do
     insertIdentRegisterAndType ident reg t
+
+  -- set register counter to expr + 1
+  modify $ \s -> s { nextFreeRegNum = expr + 1 }
+  -- set label counter to labelEnd + 1
 
   return (inner, Map.union (Map.fromList phiRes) outer)
   
