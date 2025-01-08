@@ -82,7 +82,9 @@ data Instr =
   IBrJump Label |
   ILabel Label |
   IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label) |
-  IFunCall LLVMValue LLVMType Ident [(LLVMType, LLVMValue)]
+  IFunCall LLVMValue LLVMType Ident [(LLVMType, LLVMValue)] |
+  IFunCallVoid Ident [(LLVMType, LLVMValue)] |
+  IFunDecl LLVMType Ident [LLVMType]
   deriving (Eq)
 
 instance Show DBinOp where
@@ -101,6 +103,31 @@ instance Show DRelOp where
   show RGE = "icmp sge"
   show RQU = "icmp eq"
   show RE = "icmp ne"
+
+fromFunDeclToFunValue :: Instr -> LLVMValue
+fromFunDeclToFunValue (IFunDecl retType ident args) = EVFun retType ident (map (\arg -> (arg, getValueDefaultInit arg)) args) (Block BNFC'NoPosition [])
+
+fromFnDefToFunValue :: TopDef -> LLVMValue
+fromFnDefToFunValue (FnDef _ retType ident args block) = EVFun (bnfcTypeToLLVMType retType) ident (map (\(Arg _ argType argIdent) -> (bnfcTypeToLLVMType argType, getValueDefaultInit (bnfcTypeToLLVMType argType))) args) block
+
+fromLLVMValueToInstr :: LLVMValue -> Instr
+fromLLVMValueToInstr (EVFun retType ident args block) = IFunDecl retType ident (map fst args)
+
+getTypeFromTopDef :: TopDef -> Type
+getTypeFromTopDef (FnDef _ retType _ _ _) = retType
+
+builtInFunctions :: [Instr]
+builtInFunctions =
+  [ IFunDecl TVVoid (Ident "printString") [TVString]
+  , IFunDecl TVVoid (Ident "printInt") [TVInt]
+  , IFunDecl TVInt (Ident "readInt") []
+  , IFunDecl TVString (Ident "readString") []
+  , IFunDecl TVVoid (Ident "error") []
+  -- , IFunDecl TVInt (Ident "_strlen") [TVString] -- TODO while implementing strings
+  -- , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
+  -- , IFunDecl TVInt (Ident "_strcmp") [TVString, TVString]
+  -- , IFunDecl TVString (Ident "_strcpy") [TVString, TVString]
+  ]
 
 instance Show Instr where
   show (IFunPr retType ident args) =
@@ -131,4 +158,11 @@ instance Show Instr where
     show reg ++ " = call " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
       [] -> ")"
       _  -> concatMap (\arg -> show (fst arg) ++ " " ++ show (snd arg) ++ ", ") (init args) ++ show (fst (last args)) ++ " " ++ show (snd (last args)) ++ ")"
+  show (IFunCallVoid ident args) =
+    "call void @" ++ extractIdent ident ++ "(" ++ case args of
+      [] -> ")"
+      _  -> concatMap (\arg -> show (fst arg) ++ " " ++ show (snd arg) ++ ", ") (init args) ++ show (fst (last args)) ++ " " ++ show (snd (last args)) ++ ")"
+  show (IFunDecl retType ident args) = "declare " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
+    [] -> ")"
+    _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ")"
   show _ = "+++++++++"

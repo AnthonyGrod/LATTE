@@ -1,11 +1,14 @@
-int foo(int y) {
- return y;
-}
+// Calling functions which take zero parameters
 
 int main() {
- int y = 4;
+ int y = 8;
  int x = foo(y);
  printInt(x);
- return x;
+ return 0 ;
+
+}
+
+int foo(int y) {
+ return y;
 }
 

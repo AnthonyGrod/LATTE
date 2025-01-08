@@ -97,6 +97,10 @@ insertIdentFunSig :: Ident -> LLVMValue -> CompilerM ()
 insertIdentFunSig ident val = modify $ \st ->
   st { identToFunSig = Map.insert ident val (identToFunSig st) }
 
+insertIdentFunSigs :: [(Ident, LLVMValue)] -> CompilerM ()
+insertIdentFunSigs identsAndVals = modify $ \st ->
+  st { identToFunSig = foldl (\m (ident, val) -> Map.insert ident val m) (identToFunSig st) identsAndVals }
+
 addGenLLVM :: Instr -> CompilerM ()
 addGenLLVM instr = do
   state <- get

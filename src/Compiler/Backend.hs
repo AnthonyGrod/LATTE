@@ -28,12 +28,14 @@ import Data.Map.Internal.Debug (node)
 -- decl WITH INIT in block DONE
 -- while with very simple body DONE
 -- decrement and increment DONE
--- function calls
+-- function calls basic DONE
+-- function calls recursion DONE
 -- print
+-- preprend function declarations
+-- returns in if
 -- read
 -- string manipulation
 -- lazy evaluation
--- returns in if
 
 
 runCompiler :: Program -> IO RegisterAndType
@@ -42,6 +44,18 @@ runCompiler program = runIO $ evalStateT (generateLLVMProgram program) initialSt
 
 generateLLVMProgram :: Program -> CompilerM RegisterAndType
 generateLLVMProgram (Program _ topDefs) = do
+  mapM_ addGenLLVM builtInFunctions
+  let funVals = map fromFunDeclToFunValue builtInFunctions
+  builtInFunctionIdents <- mapM (\(IFunDecl _ ident _) -> return ident) builtInFunctions
+  -- extract all function signatures and add their declarations to the beginning of the program and add them to state
+  insertIdentFunSigs $ zip builtInFunctionIdents funVals
+
+  -- extract all function signatures and add them to state
+  topDefFunIdents <- mapM (\(FnDef _ _ ident _ _) -> return ident) topDefs
+  insertIdentFunSigs $ zip topDefFunIdents (map fromFnDefToFunValue topDefs)
+  -- generate declarations
+  -- mapM_ (addGenLLVM . fromLLVMValueToInstr . fromFnDefToFunValue) topDefs
+
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
   genLLVM <- getGenLLVM
   liftIO $ writeFile "output.ll" (unlines (map show genLLVM))
@@ -51,7 +65,6 @@ generateLLVMProgram (Program _ topDefs) = do
 generateLLVMTopDef :: TopDef -> CompilerM RegisterAndType
 generateLLVMTopDef (FnDef _ retType ident args block) = do
   let argTypes = map (\(Arg _ t _) -> t) args
-  liftIO $ print $ "argTypes: " ++ show argTypes
   -- reserve registers for arguments
   argTypeRegPairs <- foldM (\acc (Arg _ t ident) -> do
     reg <- getNextRegisterAndIncrement
@@ -195,9 +208,13 @@ generateLLVMExpr (EApp _ ident exprs) = do
   let howMuchToIncrement = newRegNum - oldRegNum
   -- increment register counter by the number of registers used in generating exprs
   modify $ \s -> s { nextFreeRegNum = oldRegNum + howMuchToIncrement }
-  regForFunRes <- getNextRegisterAndIncrement
+  regForFunRes <- if retType == TVVoid
+                  then return (-1) -- dummy value for void return type
+                  else getNextRegisterAndIncrement
   mapM_ addGenLLVM generatedInstrs
-  addGenLLVM $ IFunCall (EVReg regForFunRes) retType ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
+  if retType == TVVoid
+    then addGenLLVM $ IFunCallVoid ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
+    else addGenLLVM $ IFunCall (EVReg regForFunRes) retType ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
   return (regForFunRes, retType)
 
 
@@ -218,17 +235,14 @@ generateIncDec ident op = do
 -- TODO: change inner and outer names
 generateLLVMStmt :: Stmt -> ([Ident], Map Ident RegisterAndType) -> CompilerM ([Ident], Map Ident RegisterAndType)
 generateLLVMStmt (Ass _ ident expr) (inner, outer) = do
-  _ <- trace ("ASsing inner: " ++ show inner ++ " ASsing outer: " ++ show outer) $ return ([], Map.empty)
   (exprReg, exprRegType) <- generateLLVMExpr expr   -- generate code for expression and store result in register
   insertIdentRegisterAndType ident exprReg exprRegType
   (inner', outer') <- if ident `elem` inner 
                       then return (inner, outer) 
                       else return (inner, Map.insert ident (exprReg, exprRegType) outer)
-  _ <- trace ("ASsing inner': " ++ show inner' ++ " ASsing outer': " ++ show outer') $ return ([], Map.empty)
   return (inner', outer')
 
 generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
-  _ <- trace ("starting inner: " ++ show inner ++ "starting outer: " ++ show outer) $ return ([], Map.empty)
   (inner', outer') <- foldM
     (\(innerAcc, outerAcc) declItem -> case declItem of
       NoInit _ ident -> do
@@ -252,7 +266,6 @@ generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
     )
     (inner, outer)
     items
-  _ <- trace ("starting inner': " ++ show inner' ++ "starting outer': " ++ show outer') $ return ([], Map.empty)
   return (inner', outer')
 
 generateLLVMStmt (Ret _ expr) (inner, outer) = do
@@ -287,6 +300,7 @@ generateLLVMStmt (Decr _ ident) (inner, outer) = do -- TODO: needs changing oute
     else return (inner, Map.insert ident (reg, regType) outer)
 
 generateLLVMStmt (SExp _ expr) (inner, outer) = do
+  (_, _) <- generateLLVMExpr expr
   return (inner, outer)
 
 generateLLVMStmt (Cond _ expr stmt) (inner, outer) = generateLLVMStmt (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition)) (inner, outer)
@@ -364,10 +378,6 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   -- accumplate outers
   let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
   return (inner, Map.union phiMap outer)
-
-
-
-
 
 generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   oldState <- get
