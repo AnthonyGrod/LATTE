@@ -1,0 +1,7 @@
+int main() {
+  int x = 58;
+  while (x > 45) {
+    x = 30;
+  }
+  return x;
+}

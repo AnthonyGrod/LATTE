@@ -1,0 +1,11 @@
+int main() {
+  int x = 1, y = 1;
+
+  if (x > 0) {
+    return 0;
+    x = 2;
+  }
+  printInt(x);
+
+  return 0;
+}

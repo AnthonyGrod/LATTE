@@ -57,14 +57,12 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
   addGenLLVM IFunEp
   return dummyReturnRegisterAndType
 
--- TODO: Reduce
 generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType)
 generateLLVMBlock (Block _ stmts) = do
   let comp = \(inner, outer) -> \s -> generateLLVMStmt s (inner, outer)
   (_, res) <- foldM comp ([], Map.empty) stmts
   liftIO $ print $ "res: " ++ show res
   return res
-
 
 generateLLVMExpr :: Expr -> CompilerM RegisterAndType
 generateLLVMExpr (EVar _ ident) = do
@@ -250,7 +248,6 @@ generateLLVMStmt (SExp _ expr) (inner, outer) = do
 
 generateLLVMStmt (Cond _ expr stmt) (inner, outer) = generateLLVMStmt (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition)) (inner, outer)
 
-
 generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   (exprReg, _) <- generateLLVMExpr expr
   currState <- get
@@ -265,12 +262,11 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   currLabel <- getCurrentBasicBlockLabel
   oldState <- get
   let oldIdentToRegisterAndType = identToRegisterAndType oldState
-  -- let oldIdentToFunSig = identToFunSig oldState 
 
   -- generate code for true branch
-  addGenLLVM $ ILabel labelTrue
-  setcurrBasicBlockLabel labelTrue
   insertEmptyBasicBlock labelTrue
+  setcurrBasicBlockLabel labelTrue
+  addGenLLVM $ ILabel labelTrue
   (_, outer1) <- generateLLVMStmt stmt1 ([], Map.empty)
   currentBl1 <- getCurrentBasicBlockLabel
   addGenLLVM $ IBrJump labelEnd
@@ -278,17 +274,18 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
 
   -- generate code for false branch
-  addGenLLVM $ ILabel labelFalse
-  setcurrBasicBlockLabel labelFalse
   insertEmptyBasicBlock labelFalse
+  setcurrBasicBlockLabel labelFalse
+  addGenLLVM $ ILabel labelFalse
   (_, outer2) <- generateLLVMStmt stmt2 ([], Map.empty)
   currentBl2 <- getCurrentBasicBlockLabel
   addGenLLVM $ IBrJump labelEnd
   mm2 <- gets identToRegisterAndType
   modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
 
-  addGenLLVM $ ILabel labelEnd
   insertEmptyBasicBlock labelEnd
+  setcurrBasicBlockLabel labelEnd
+  addGenLLVM $ ILabel labelEnd
 
   -- generate phi statements for variables that were changed in both branches
   let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection outer1 outer2
@@ -301,8 +298,6 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
     insertIdentRegisterAndType ident r1' t1
     return (ident, (r1', t1))
 
-  -- trace label true
-  liftIO $ print $ "labelTrue: " ++ show labelTrue
   -- generate phi statements for variables that were changed in one branch
   let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference outer1 outer2
   let phiNodesWithTypes1 = map (\ident -> (ident, outer1 Map.! ident)) phiNodes1
@@ -325,8 +320,87 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
 
   -- accumplate outers
   let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
-  setcurrBasicBlockLabel labelEnd
   return (inner, Map.union phiMap outer)
 
-generateLLVMStmt (While _ expr stmt) (inner, outer) = undefined
+generateLLVMStmt (While _ expr stmt) (inner, outer) = do
+  oldState <- get
+  oldRegisterAndTypeMap <- gets identToRegisterAndType
+
+  currLabel <- getCurrentBasicBlockLabel
+  labelBefore <- getNextLabelAndIncrement
+  labelCond <- getNextLabelAndIncrement
+  labelBody <- getNextLabelAndIncrement
+  labelEnd <- getNextLabelAndIncrement
+
+  (inner', outer') <- generateLLVMStmt stmt ([], Map.empty)
+  liftIO $ print $ "----outer----: " ++ show outer
+  -- print current next register number
+  liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
+
+  -- generate phi nodes for variables that were changed in the loop
+  insertEmptyBasicBlock labelBefore
+  setcurrBasicBlockLabel labelBefore
+  addGenLLVM $ IBrJump labelBefore
+  addGenLLVM $ ILabel labelBefore
+  let phiNodes = LU.sortUniq $ Map.keys outer'
+  liftIO $ print $ "----phiNodes----: " ++ show phiNodes
+  let phiNodesWithTypes = map (\ident -> (ident, outer' Map.! ident)) phiNodes
+  phiRes <- forM phiNodesWithTypes $ \(ident, (reg, t)) -> do
+    r' <- getNextRegisterAndIncrement
+    liftIO $ print $ "----r'----: " ++ show r'
+    let (oldRegister, _) = oldRegisterAndTypeMap Map.! ident
+    addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currLabel) (EVReg reg, labelBody)
+    insertIdentRegisterAndType ident r' t
+    return (ident, (r', t))
+
+  insertEmptyBasicBlock labelCond
+  setcurrBasicBlockLabel labelCond
+  addGenLLVM $ IBrJump labelCond
+  addGenLLVM $ ILabel labelCond
+  (expr, _) <- generateLLVMExpr expr
+
+  addGenLLVM $ IBr (EVReg expr) labelBody labelEnd
+
+  instrBeforeAcc <- getBasicBlockGenLLVM labelBefore -- get generated phi instructions
+  instrCondAcc <- getBasicBlockGenLLVM labelCond -- get cond generated LLVM
+
+  liftIO $ print $ "----instrBeforeAcc----: " ++ show instrBeforeAcc
+  liftIO $ print $ "----instrCondAcc----: " ++ show instrCondAcc
+
+  put oldState -- restore state before the loop
+
+  -- insert labelBefore and labelCond blocks again along with their instructions
+  insertEmptyBasicBlock labelBefore
+  setcurrBasicBlockLabel labelBefore
+  mapM_ addGenLLVM instrBeforeAcc
+
+  insertEmptyBasicBlock labelCond
+  setcurrBasicBlockLabel labelCond
+  mapM_ addGenLLVM instrCondAcc
+
+  instrBef <- getBasicBlockGenLLVM labelBefore
+  liftIO $ print $ "----instrBef----: " ++ show instrBef
+  instrC <- getBasicBlockGenLLVM labelCond
+  liftIO $ print $ "----instrC----: " ++ show instrC
+
+  insertEmptyBasicBlock labelBody
+  setcurrBasicBlockLabel labelBody
+  addGenLLVM $ ILabel labelBody
+  (_, _) <- generateLLVMStmt stmt ([], Map.empty)
+  addGenLLVM $ IBr (EVReg expr) labelBefore labelEnd
+
+  insertEmptyBasicBlock labelEnd
+  setcurrBasicBlockLabel labelEnd
+  addGenLLVM $ ILabel labelEnd
+
+  liftIO $ print $ "----phiRes----: " ++ show phiRes
+  --print current register number
+  liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
+
+  -- insert state variables by phi
+  forM_ phiRes $ \(ident, (reg, t)) -> do
+    insertIdentRegisterAndType ident reg t
+
+  return (inner, Map.union (Map.fromList phiRes) outer)
+  
 

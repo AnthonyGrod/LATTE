@@ -1,0 +1,9 @@
+int main() {
+  int a, j = 2 * 8 - 2;
+  int i = 1;
+  boolean b = a < i;
+  boolean c = b && true;
+  return j;
+}
+
+

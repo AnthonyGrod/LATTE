@@ -1,0 +1,12 @@
+int main() {
+  int x = 1;
+  int y = 2;
+  if (x > 0) {
+    x = 9;
+    if (x > 2) {
+      x = 88;
+    }
+    y = 78;
+  }
+  return y + x;
+}

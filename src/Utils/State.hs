@@ -123,6 +123,11 @@ getAllBasicBlocksGenLLVM :: CompilerM [Instr]
 getAllBasicBlocksGenLLVM = do
   gets (concatMap bbInstructions . Map.elems . basicBlocks)
 
+getBasicBlockGenLLVM :: Label -> CompilerM [Instr]
+getBasicBlockGenLLVM label = do
+  bb <- getBasicBlock label
+  return $ bbInstructions bb
+
 insertBasicBlock :: BasicBlock -> CompilerM ()
 insertBasicBlock bb = do
   state <- get
