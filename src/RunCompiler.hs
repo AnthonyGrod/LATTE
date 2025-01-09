@@ -19,7 +19,6 @@ compile fileNameWithPath input = case pProgram (myLexer input) of
     putStrLn "ERROR" >>
     putStrLn err
   Right program -> do
-    -- putStrLn $ show program
     result <- typecheck program
     case result of
       Left err -> do

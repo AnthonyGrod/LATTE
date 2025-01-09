@@ -6,22 +6,15 @@ module Compiler.Backend where
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.List (nub, sort)
 
 import Parser.Abs
-import Utils.Types
-import Utils.Aux
-import Utils.State
+import Aux
+import State
+import qualified Control.Monad
 import Control.Monad.State
-import Control.Monad.Except
-import Control.Monad.Identity
 import GHC.TopHandler (runIO)
 import System.Process (system)
-
-import qualified Data.List.Unique as LU
-import qualified Data.List as L
-import Debug.Trace
-import Data.Map.Internal.Debug (node)
-import qualified Control.Monad
 
 
 runCompiler :: Program -> String -> IO RegisterAndType
@@ -53,7 +46,6 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
     _ <- system $ "llvm-as " ++ outputFilePath ++ " -o " ++ outputBCFilePath
     _ <- system $ "llvm-link " ++ outputFilePath ++ " lib/runtime.bc -o " ++ outputBCFilePath
     return ()
-  liftIO $ writeFile outputFilePath (unlines (map show genLLVMWithStrings))
   return dummyReturnRegisterAndType
 
 
@@ -356,7 +348,7 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
           labelFalse <- getNextLabelAndIncrement
           labelEnd  <- getNextLabelAndIncrement
 
-          -- Generate conditional jump and get current label and state
+          -- generate conditional jump and get current label and state
           addGenLLVM $ IBr (EVReg exprReg) labelTrue labelFalse
           currLabel <- getCurrentBasicBlockLabel
           oldState <- get
@@ -392,10 +384,12 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
           setcurrBasicBlockLabel labelEnd
           addGenLLVM $ ILabel labelEnd
 
-          -- generate phi statements for variables that were changed in both branches
-          let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection prevDeclAndChanged1 prevDeclAndChanged2
-          let phiNodesWithTypes = map (\ident -> (ident, (prevDeclAndChanged1 Map.! ident, prevDeclAndChanged2 Map.! ident))) phiNodes
-          phiRes <- forM phiNodesWithTypes $ \(ident, (reg1, reg2)) -> do
+          -- PHI for variables changed in both branches
+          let phiInstrs = nub (sort (Map.keys (Map.intersection prevDeclAndChanged1 prevDeclAndChanged2)))
+          let phiInstrsWithTypes = 
+                map (\ident -> (ident, (prevDeclAndChanged1 Map.! ident, prevDeclAndChanged2 Map.! ident)))
+                    phiInstrs
+          phiRes <- forM phiInstrsWithTypes $ \(ident, (reg1, reg2)) -> do
             let (r1, t1) = reg1
             let (r2, t2) = reg2
             r1' <- getNextRegisterAndIncrement
@@ -403,20 +397,19 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
             insertIdentRegisterAndType ident r1' t1
             return (ident, (r1', t1))
 
-          -- generate phi statements for variables that were changed in one branch
-          let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference prevDeclAndChanged1 prevDeclAndChanged2
-          let phiNodesWithTypes1 = map (\ident -> (ident, prevDeclAndChanged1 Map.! ident)) phiNodes1
-          phiRes1 <- forM phiNodesWithTypes1 $ \(ident, (reg, t)) -> do
+          -- PHI for variables changed in only one branch
+          let phiInstrs1 = nub (sort (Map.keys (Map.difference prevDeclAndChanged1 prevDeclAndChanged2)))
+          let phiInstrsWithTypes1 = map (\ident -> (ident, prevDeclAndChanged1 Map.! ident)) phiInstrs1
+          phiRes1 <- forM phiInstrsWithTypes1 $ \(ident, (reg, t)) -> do
             r' <- getNextRegisterAndIncrement
             (oldRegister, _) <- lookupIdentRegisterAndType ident
             addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl2) (EVReg reg, currentBl1)
             insertIdentRegisterAndType ident r' t
             return (ident, (r', t))
 
-          -- generate phi statements for variables that were changed in one branch
-          let phiNodes2 = LU.sortUniq $ Map.keys $ Map.difference prevDeclAndChanged2 prevDeclAndChanged1
-          let phiNodesWithTypes2 = map (\ident -> (ident, prevDeclAndChanged2 Map.! ident)) phiNodes2
-          phiRes2 <- forM phiNodesWithTypes2 $ \(ident, (reg, t)) -> do
+          let phiInstrs2 = nub (sort (Map.keys (Map.difference prevDeclAndChanged2 prevDeclAndChanged1)))
+          let phiInstrsWithTypes2 = map (\ident -> (ident, prevDeclAndChanged2 Map.! ident)) phiInstrs2
+          phiRes2 <- forM phiInstrsWithTypes2 $ \(ident, (reg, t)) -> do
             r' <- getNextRegisterAndIncrement
             (oldRegister, _) <- lookupIdentRegisterAndType ident
             addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl1) (EVReg reg, currentBl2)
@@ -442,11 +435,9 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
                   addGenLLVM $ IFunRet (EVReg newReg) returnType
                   setRetValue (newReg, returnType)
             
-          -- accumplate prevDeclAndChangeds
           let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
           return (currDecl, Map.union phiMap prevDeclAndChanged)
 
--- TODO: Return flag does not work in while
 generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   oldState <- get
   oldRegisterAndTypeMap <- gets identToRegisterAndType
@@ -457,7 +448,7 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   labelBody <- getNextLabelAndIncrement
   labelEnd <- getNextLabelAndIncrement
 
-  insertEmptyBasicBlock labelBody -- might not be the best idea but works for now
+  insertEmptyBasicBlock labelBody
   setcurrBasicBlockLabel labelBody
   (currDecl', prevDeclAndChanged') <- generateLLVMStmt stmt ([], Map.empty)
   endingBodyLabel <- getCurrentBasicBlockLabel
@@ -467,9 +458,9 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   setcurrBasicBlockLabel labelBefore
   addGenLLVM $ IBrJump labelBefore
   addGenLLVM $ ILabel labelBefore
-  let phiNodes = LU.sortUniq $ Map.keys prevDeclAndChanged'
-  let phiNodesWithTypes = map (\ident -> (ident, prevDeclAndChanged' Map.! ident)) phiNodes
-  phiRes <- forM phiNodesWithTypes $ \(ident, (reg, t)) -> do
+  let phiInstrs = nub (sort (Map.keys prevDeclAndChanged'))
+  let phiInstrsWithTypes = map (\ident -> (ident, prevDeclAndChanged' Map.! ident)) phiInstrs
+  phiRes <- forM phiInstrsWithTypes $ \(ident, (reg, t)) -> do
     r' <- getNextRegisterAndIncrement
     let (oldRegister, _) = oldRegisterAndTypeMap Map.! ident
     addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currLabel) (EVReg reg, endingBodyLabel)
@@ -489,9 +480,8 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
 
   put oldState -- restore state before the loop
   modify $ \s -> s { nextFreeLabelNum = labelEnd + 1 }
-  -- increment label count by 2 because of the before and cond labels that already exist
 
-  -- insert labelBefore and labelCond blocks again along with their instructions
+  -- insert labelBefore and labelCond blocks again along wiht their instructions
   insertEmptyBasicBlock labelBefore
   setcurrBasicBlockLabel labelBefore
   mapM_ addGenLLVM instrBeforeAcc
@@ -507,14 +497,12 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   setcurrBasicBlockLabel labelBody
   addGenLLVM $ ILabel labelBody
 
-  -- insert state variables by phi
   forM_ phiRes $ \(ident, (reg, t)) -> do
     insertIdentRegisterAndType ident reg t
 
   (_, _) <- generateLLVMStmt stmt ([], Map.empty)
   addGenLLVM $ IBr (EVReg expr) labelBefore labelEnd
 
-  -- insert state variables by phi - not sure
   forM_ phiRes $ \(ident, (reg, t)) -> do
     insertIdentRegisterAndType ident reg t
 
@@ -522,8 +510,6 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   setcurrBasicBlockLabel labelEnd
   addGenLLVM $ ILabel labelEnd
 
-
-  -- set register counter to expr + 1
   modify $ \s -> s { nextFreeRegNum = expr + 1 }
 
   return (currDecl, Map.union (Map.fromList phiRes) prevDeclAndChanged)

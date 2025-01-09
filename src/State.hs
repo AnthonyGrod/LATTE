@@ -2,10 +2,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Utils.State where
+module State where
 
-import Utils.Types
-import Utils.Aux
+import Aux
 import Parser.Abs
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -64,14 +63,6 @@ checkIfReturnValueNotDummy = do
   state <- get
   return $ returnValue state /= dummyReturnRegisterAndType
 
-addRetValueGenLLVM :: CompilerM ()
-addRetValueGenLLVM = do
-  state <- get
-  let (reg, regType) = returnValue state
-  if (reg, regType) == dummyReturnRegisterAndType
-    then return ()
-    else addGenLLVM $ IFunRet (EVReg reg) regType
-
 setRetValueToDummy :: CompilerM ()
 setRetValueToDummy = modify $ \st -> st { returnValue = dummyReturnRegisterAndType }
 
@@ -101,15 +92,9 @@ getNextStringNumAndIncrement = do
   put state { nextFreeStringNum = currentStringNum + 1 }
   return currentStringNum
 
-getStringFromGlobalStringMap :: StringNum -> CompilerM String
-getStringFromGlobalStringMap num = do
-  state <- get
-  case Map.lookup num (globalStringMap state) of
-    Just s -> return s
-    Nothing -> error $ "String with number " ++ show num ++ " not found"
-
 insertStringToGlobalStringMap :: StringNum -> String -> CompilerM ()
-insertStringToGlobalStringMap num str = modify $ \st -> st { globalStringMap = Map.insert num str (globalStringMap st) }
+insertStringToGlobalStringMap num str = modify $ \st ->
+  st { globalStringMap = Map.insert num str (globalStringMap st) }
 
 getNextRegisterAndIncrement :: CompilerM Register
 getNextRegisterAndIncrement = do
@@ -123,7 +108,8 @@ getCurrentBasicBlockLabel = gets currBasicBlockLabel
 
 insertIdentRegisterAndType :: Ident -> Register -> LLVMType -> CompilerM ()
 insertIdentRegisterAndType ident reg typ = do
-  modify $ \st -> st { identToRegisterAndType = Map.insert ident (reg, typ) (identToRegisterAndType st) }
+  modify $ \st -> st
+    { identToRegisterAndType = Map.insert ident (reg, typ) (identToRegisterAndType st) }
 
 lookupIdentRegisterAndType :: Ident -> CompilerM RegisterAndType
 lookupIdentRegisterAndType ident = do
@@ -132,28 +118,21 @@ lookupIdentRegisterAndType ident = do
     Just regAndType -> return regAndType
     Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
 
-lookupIdentRegisterAndTypeInOldState :: CompileState -> Ident -> CompilerM RegisterAndType
-lookupIdentRegisterAndTypeInOldState state ident =
-  case Map.lookup ident (identToRegisterAndType state) of
-    Just regAndType -> return regAndType
-    Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
-
-insertIdentFunSig :: Ident -> LLVMValue -> CompilerM ()
-insertIdentFunSig ident val = modify $ \st ->
-  st { identToFunSig = Map.insert ident val (identToFunSig st) }
-
 insertIdentFunSigs :: [(Ident, LLVMValue)] -> CompilerM ()
 insertIdentFunSigs identsAndVals = modify $ \st ->
-  st { identToFunSig = foldl (\m (ident, val) -> Map.insert ident val m) (identToFunSig st) identsAndVals }
+  st { identToFunSig = foldl (\m (i, v) -> Map.insert i v m) (identToFunSig st) identsAndVals }
 
 addGenLLVM :: Instr -> CompilerM ()
 addGenLLVM instr = do
   state <- get
   let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
-  put state { basicBlocks = Map.insert currLabel newBB bb, allInstructions = allInstructions state ++ [instr] }
+  let bbMap     = basicBlocks state
+  let currBB    = bbMap Map.! currLabel
+  let newBB     = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
+  put state
+    { basicBlocks     = Map.insert currLabel newBB bbMap
+    , allInstructions = allInstructions state ++ [instr]
+    }
 
 getGenLLVM :: CompilerM [Instr]
 getGenLLVM = gets allInstructions
@@ -165,10 +144,6 @@ getBasicBlock :: Label -> CompilerM BasicBlock
 getBasicBlock label = do
   state <- get
   return $ basicBlocks state Map.! label
-
-getAllBasicBlocksGenLLVM :: CompilerM [Instr]
-getAllBasicBlocksGenLLVM = do
-  gets (concatMap bbInstructions . Map.elems . basicBlocks)
 
 getBasicBlockGenLLVM :: Label -> CompilerM [Instr]
 getBasicBlockGenLLVM label = do
@@ -182,18 +157,3 @@ insertBasicBlock bb = do
 
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
-
-insertInstrToBasicBlock :: Label -> Instr -> CompilerM ()
-insertInstrToBasicBlock label instr = do
-  bb <- getBasicBlock label
-  let newBB = bb { bbInstructions = bbInstructions bb ++ [instr] }
-  insertBasicBlock newBB
-
-insertInstrToCurrBasicBlock :: Instr -> CompilerM ()
-insertInstrToCurrBasicBlock instr = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bb = basicBlocks state
-  let currBB = bb Map.! currLabel
-  let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
-  put state { basicBlocks = Map.insert currLabel newBB bb }

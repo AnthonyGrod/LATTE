@@ -2,10 +2,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Utils.Types where
+module Aux where
 
 import Parser.Abs
-import Utils.Aux
 
 type Label = Int
 type Register = Int
@@ -77,10 +76,10 @@ data DBinOp = BAdd | BSub | BMul | BDiv | BMod | BAnd | BOr deriving (Eq)
 data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE deriving (Eq)
 
 data Instr =
-  IFunPr LLVMType Ident [(LLVMType, LLVMValue)] |           -- function definition (ret type + name + [(arg type, arg register)])
-  IAss   LLVMValue LLVMValue | -- assign Reg = SimpleValue
-  IBinOp LLVMValue LLVMValue LLVMValue DBinOp | -- binary operation
-  IRelOp LLVMValue LLVMType LLVMValue LLVMValue DRelOp | -- relational operation
+  IFunPr LLVMType Ident [(LLVMType, LLVMValue)] | 
+  IAss   LLVMValue LLVMValue |
+  IBinOp LLVMValue LLVMValue LLVMValue DBinOp | 
+  IRelOp LLVMValue LLVMType LLVMValue LLVMValue DRelOp | 
   IFunEp  |
   IFunRet LLVMValue LLVMType |
   IBr LLVMValue Label Label |
@@ -177,3 +176,27 @@ instance Show Instr where
     [] -> ")"
     _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ")"
   show (IStringGlobal ident str) = "@." ++ extractIdent ident ++ " = private constant [" ++ show (length str + 1) ++ " x i8] c\"" ++ str ++ "\\00\""
+
+
+
+extractIdent :: Ident -> String
+extractIdent (Ident s) = s
+
+extractIdentFromItem :: Item -> Ident
+extractIdentFromItem (NoInit _ ident) = ident
+extractIdentFromItem (Init _ ident _) = ident
+
+isELitTrue :: Expr -> Bool
+isELitTrue (ELitTrue _) = True
+isELitTrue _            = False
+
+isELitFalse :: Expr -> Bool
+isELitFalse (ELitFalse _) = True
+isELitFalse _             = False
+
+doesBlockContainVRet :: Block -> Bool
+doesBlockContainVRet (Block _ stmts) = any isVRet stmts
+  where
+    isVRet :: Stmt -> Bool
+    isVRet (VRet _) = True
+    isVRet _        = False
