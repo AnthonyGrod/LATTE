@@ -9,6 +9,7 @@ import Utils.Aux
 
 type Label = Int
 type Register = Int
+type StringNum = Int
 type RegisterAndType = (Register, LLVMType)
 
 showRegister :: Register -> String
@@ -23,7 +24,7 @@ dummyReturnRegisterAndType = (-1, TVVoid)
 data LLVMValue =
   EVInt Int |
   EVBool Bool |
-  EVString String |
+  EVString String StringNum |
   EVVoid |
   EVFun LLVMType Ident [(LLVMType, LLVMValue)] Block | -- return type + name + (arg type, arg register) + block
   EVLabel Int |
@@ -57,7 +58,9 @@ instance Show LLVMType where
 instance Show LLVMValue where
   show (EVInt i) = "add i32 0, " ++ show i
   show (EVBool b) = if b then "or i1 true, true" else "or i1 false, false"
-  show (EVString s) = s -- TODO: STRING MANIPULATION
+  show (EVString s strNum) = "getelementptr " ++ 
+                      "[" ++ show (length s + 1) ++ " x i8], "
+                      ++ "[" ++ show (length s + 1) ++ " x i8]* @." ++ show strNum ++ ", i32 0, i32 0"
   show EVVoid = "void"
   show (EVFun retType ident args block) = show retType ++ " @" ++ show ident ++ "(" ++ show args ++ ") {\n" ++ show block ++ "\n}"
   show (EVLabel i) = "label %" ++ show i
@@ -66,7 +69,7 @@ instance Show LLVMValue where
 getValueDefaultInit :: LLVMType -> LLVMValue
 getValueDefaultInit TVInt = EVInt 0
 getValueDefaultInit TVBool = EVBool False
-getValueDefaultInit TVString = EVString ""
+getValueDefaultInit TVString = EVString "" 1
 getValueDefaultInit TVVoid = EVVoid
 getValueDefaultInit TVLabel = EVLabel 0
 
@@ -86,7 +89,8 @@ data Instr =
   IPhi LLVMValue LLVMType (LLVMValue, Label) (LLVMValue, Label) |
   IFunCall LLVMValue LLVMType Ident [(LLVMType, LLVMValue)] |
   IFunCallVoid Ident [(LLVMType, LLVMValue)] |
-  IFunDecl LLVMType Ident [LLVMType]
+  IFunDecl LLVMType Ident [LLVMType] |
+  IStringGlobal Ident String 
   deriving (Eq)
 
 instance Show DBinOp where
@@ -174,4 +178,5 @@ instance Show Instr where
   show (IFunDecl retType ident args) = "declare " ++ show retType ++ " @" ++ extractIdent ident ++ "(" ++ case args of
     [] -> ")"
     _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ")"
+  show (IStringGlobal ident str) = "@." ++ extractIdent ident ++ " = private constant [" ++ show (length str + 1) ++ " x i8] c\"" ++ str ++ "\\00\""
   show _ = "+++++++++"

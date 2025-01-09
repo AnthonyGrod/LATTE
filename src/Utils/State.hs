@@ -15,16 +15,17 @@ import Control.Monad.Identity (Identity)
 
 
 data CompileState = CompileState
-  { nextFreeLabelNum :: Int      -- next free label number
+  { nextFreeLabelNum :: Int
   , nextFreeRegNum   :: Register
   , basicBlocks      :: Map Label BasicBlock
-  , currBasicBlockLabel :: Label -- we need to know in which basic block we are currently so we can emit instructions to it
+  , currBasicBlockLabel :: Label
   , identToRegisterAndType :: Map Ident RegisterAndType
   , identToFunSig    :: Map Ident LLVMValue
   , allInstructions  :: [Instr]
   , returnValue      :: RegisterAndType
   , doNotReturn      :: Bool
-  -- , bbPredecessor    :: Label
+  , globalStringMap  :: Map StringNum String
+  , nextFreeStringNum :: StringNum
   }
 
 initialState :: CompileState
@@ -38,10 +39,10 @@ initialState = CompileState
   , allInstructions = []
   , returnValue = dummyReturnRegisterAndType
   , doNotReturn = False
-  -- , bbPredecessor = -1
+  , globalStringMap = Map.fromList [(1, "")] -- for empty string
+  , nextFreeStringNum = 2
   }
 
--- write a function that sets identToRegisterAndType to empty
 setIdentToRegisterAndTypeToEmpty :: CompileState -> CompileState
 setIdentToRegisterAndTypeToEmpty state = state { identToRegisterAndType = Map.empty }
 
@@ -50,16 +51,12 @@ type CompilerM a = StateT CompileState IO a
 data BasicBlock = BasicBlock
   { bbLabel        :: Label
   , bbInstructions :: [Instr]
-  -- , varsDeclaredInCurrBlock :: [Ident]
-  -- , varsChangedFromPredBlock :: Map Ident (RegisterAndType, Label)
   }
 
 emptyBasicBlock :: Label -> BasicBlock
 emptyBasicBlock label = BasicBlock
   { bbLabel = label
   , bbInstructions = []
-  -- , varsDeclaredInCurrBlock = []
-  -- , varsChangedFromPredBlock = Map.empty
   }
 
 checkIfReturnValueNotDummy :: CompilerM Bool
@@ -96,6 +93,23 @@ getNextLabelAndIncrement = do
   let currentLabel = nextFreeLabelNum state
   put state { nextFreeLabelNum = currentLabel + 1 }
   return currentLabel
+
+getNextStringNumAndIncrement :: CompilerM StringNum
+getNextStringNumAndIncrement = do
+  state <- get
+  let currentStringNum = nextFreeStringNum state
+  put state { nextFreeStringNum = currentStringNum + 1 }
+  return currentStringNum
+
+getStringFromGlobalStringMap :: StringNum -> CompilerM String
+getStringFromGlobalStringMap num = do
+  state <- get
+  case Map.lookup num (globalStringMap state) of
+    Just s -> return s
+    Nothing -> error $ "String with number " ++ show num ++ " not found"
+
+insertStringToGlobalStringMap :: StringNum -> String -> CompilerM ()
+insertStringToGlobalStringMap num str = modify $ \st -> st { globalStringMap = Map.insert num str (globalStringMap st) }
 
 getNextRegisterAndIncrement :: CompilerM Register
 getNextRegisterAndIncrement = do
@@ -144,12 +158,6 @@ addGenLLVM instr = do
 getGenLLVM :: CompilerM [Instr]
 getGenLLVM = gets allInstructions
 
--- getPredecessorLabel :: CompilerM Label
--- getPredecessorLabel = gets bbPredecessor
-
--- setPredecessorLabel :: Label -> CompilerM ()
--- setPredecessorLabel label = modify $ \st -> st { bbPredecessor = label }
-
 setcurrBasicBlockLabel :: Label -> CompilerM ()
 setcurrBasicBlockLabel label = modify $ \st -> st { currBasicBlockLabel = label }
 
@@ -175,23 +183,6 @@ insertBasicBlock bb = do
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
 
--- insertEmptyBasicBlockWithCopiedVars :: Label -> CompilerM ()
--- insertEmptyBasicBlockWithCopiedVars label = do
---   state <- get
---   let currLabel = currBasicBlockLabel state
---   let bb = basicBlocks state
---   let currBB = bb Map.! currLabel
---   let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB
---                                       , varsChangedFromPredBlock = varsChangedFromPredBlock currBB }
---   insertBasicBlock newBB
-
--- insertEmptyBasicBlockWithCopiedVarsFromBlock :: Label -> Label -> CompilerM ()
--- insertEmptyBasicBlockWithCopiedVarsFromBlock label blockLabel = do
---   bb <- getBasicBlock blockLabel
---   let newBB = (emptyBasicBlock label) { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock bb
---                                       , varsChangedFromPredBlock = varsChangedFromPredBlock bb }
---   insertBasicBlock newBB
-
 insertInstrToBasicBlock :: Label -> Instr -> CompilerM ()
 insertInstrToBasicBlock label instr = do
   bb <- getBasicBlock label
@@ -206,21 +197,3 @@ insertInstrToCurrBasicBlock instr = do
   let currBB = bb Map.! currLabel
   let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
   put state { basicBlocks = Map.insert currLabel newBB bb }
-
--- copyRegisterToNextFree :: Register -> LLVMType -> CompilerM Register
--- copyRegisterToNextFree reg typ = do
---   case typ of
---     TVInt -> do
---       zeroReg <- getNextRegisterAndIncrement
---       addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0)
---       newReg <- getNextRegisterAndIncrement
---       addGenLLVM $ IBinOp (EVReg newReg) (EVReg zeroReg) (EVReg reg) BAdd
---       return newReg
---     TVBool -> do
---       falseReg <- getNextRegisterAndIncrement
---       addGenLLVM $ IBinOp (EVReg falseReg) (EVBool False) (EVBool False) BOr
---       newReg <- getNextRegisterAndIncrement
---       addGenLLVM $ IBinOp (EVReg newReg) (EVReg falseReg) (EVReg reg) BOr
---       return newReg
---     TVVoid -> return reg
---     _ -> error "Cannot copy register of this type" -- TODO: String manipulation
