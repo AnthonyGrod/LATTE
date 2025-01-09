@@ -35,7 +35,8 @@ data LLVMType =
   TVBool |
   TVString |
   TVVoid |
-  TVLabel
+  TVLabel |
+  TVReg
   deriving (Eq)
 
 bnfcTypeToLLVMType :: Type -> LLVMType
@@ -51,11 +52,12 @@ instance Show LLVMType where
   show TVString = "i8*"
   show TVVoid = "void"
   show TVLabel = "label"
+  show TVReg = "register"
 
 instance Show LLVMValue where
   show (EVInt i) = "add i32 0, " ++ show i
   show (EVBool b) = if b then "or i1 true, true" else "or i1 false, false"
-  show (EVString s) = s
+  show (EVString s) = s -- TODO: STRING MANIPULATION
   show EVVoid = "void"
   show (EVFun retType ident args block) = show retType ++ " @" ++ show ident ++ "(" ++ show args ++ ") {\n" ++ show block ++ "\n}"
   show (EVLabel i) = "label %" ++ show i
@@ -73,9 +75,9 @@ data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE deriving (Eq)
 
 data Instr =
   IFunPr LLVMType Ident [(LLVMType, LLVMValue)] |           -- function definition (ret type + name + [(arg type, arg register)])
-  IAss   LLVMValue LLVMValue | -- assign Reg = Value
+  IAss   LLVMValue LLVMValue | -- assign Reg = SimpleValue
   IBinOp LLVMValue LLVMValue LLVMValue DBinOp | -- binary operation
-  IRelOp LLVMValue LLVMValue LLVMValue DRelOp | -- relational operation
+  IRelOp LLVMValue LLVMType LLVMValue LLVMValue DRelOp | -- relational operation
   IFunEp  |
   IFunRet LLVMValue LLVMType |
   IBr LLVMValue Label Label |
@@ -144,8 +146,10 @@ instance Show Instr where
       BAnd -> show dest ++ " = and i1 " ++ show op1 ++ ", " ++ show op2
       BOr -> show dest ++ " = or i1 " ++ show op1 ++ ", " ++ show op2
       _ -> show dest ++ " = " ++ show binOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
-  show (IRelOp dest op1 op2 relOp) =
-    show dest ++ " = " ++ show relOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
+  show (IRelOp dest destType op1 op2 relOp) =
+    case destType of
+      TVInt -> show dest ++ " = " ++ show relOp ++ " i32 " ++ show op1 ++ ", " ++ show op2
+      TVBool -> show dest ++ " = " ++ show relOp ++ " i1 " ++ show op1 ++ ", " ++ show op2
   show (ILabel label) = showLabel label ++ ":"
   show (IBr cond trueLabel falseLabel) =
     "br i1 " ++ show cond ++ ", label %" ++ showLabel trueLabel ++ ", label %" ++ showLabel falseLabel

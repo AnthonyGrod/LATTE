@@ -30,8 +30,8 @@ import Data.Map.Internal.Debug (node)
 -- decrement and increment DONE
 -- function calls basic DONE
 -- function calls recursion DONE
--- print
--- preprend function declarations
+-- print DONE partially
+-- preprend function declarations DONE 
 -- returns in if
 -- read
 -- string manipulation
@@ -50,7 +50,7 @@ generateLLVMProgram (Program _ topDefs) = do
   -- extract all function signatures and add their declarations to the beginning of the program and add them to state
   insertIdentFunSigs $ zip builtInFunctionIdents funVals
 
-  -- extract all function signatures and add them to state
+  -- extract all function signatures and add them to states - potentially dangerous
   topDefFunIdents <- mapM (\(FnDef _ _ ident _ _) -> return ident) topDefs
   insertIdentFunSigs $ zip topDefFunIdents (map fromFnDefToFunValue topDefs)
   -- generate declarations
@@ -88,8 +88,9 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
 
 generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType) -- TODO: Reduce
 generateLLVMBlock (Block _ stmts) = do
+  liftIO $ print $ "stmts: " ++ show stmts
   let comp = \(inner, outer) -> \s -> generateLLVMStmt s (inner, outer)
-  (_, res) <- foldM comp ([], Map.empty) stmts
+  (innerRes, res) <- foldM comp ([], Map.empty) stmts
   liftIO $ print $ "res: " ++ show res
   return res
 
@@ -103,35 +104,41 @@ generateLLVMExpr (EVar _ ident) = do
 
 generateLLVMExpr (ELitInt _ i) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVInt $ fromIntegral i)
+  addGenLLVM $ IAss (EVReg reg) (EVInt $ fromIntegral i) 
   return (reg, TVInt)
 
 generateLLVMExpr (ELitTrue _) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool True)
+  addGenLLVM $ IAss (EVReg reg) (EVBool True) 
   return (reg, TVBool)
 
 generateLLVMExpr (ELitFalse _) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool False)
+  addGenLLVM $ IAss (EVReg reg) (EVBool False) 
   return (reg, TVBool)
 
 generateLLVMExpr (EString _ s) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVString s)
+  addGenLLVM $ IAss (EVReg reg) (EVString s) 
   return (reg, TVString)
 
 generateLLVMExpr (Neg _ expr) = do
   (exprReg, exprRegType) <- generateLLVMExpr expr
-  resultReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg resultReg) (EVReg exprReg)
-  return (resultReg, exprRegType)
+  -- generate negative by subtracting from 0
+  zeroReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0) 
+  resReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IBinOp (EVReg resReg) (EVReg zeroReg) (EVReg exprReg) BSub
+  return (resReg, exprRegType)
 
 generateLLVMExpr (Not _ expr) = do
   (exprReg, exprRegType) <- generateLLVMExpr expr
-  resultReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg resultReg) (EVReg exprReg)
-  return (resultReg, exprRegType)
+  trueReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IAss (EVReg trueReg) (EVBool True) 
+  resReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IRelOp (EVReg resReg) exprRegType (EVReg exprReg) (EVReg trueReg) RQU
+  return (resReg, TVBool)
+  
 
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1
@@ -165,7 +172,7 @@ generateLLVMExpr (ERel _ expr1 oper expr2) = do
         GE _ -> RGE
         EQU _ -> RQU
         NE _ -> RE
-  addGenLLVM $ IRelOp (EVReg resultReg) (EVReg exprReg1) (EVReg exprReg2) relOp
+  addGenLLVM $ IRelOp (EVReg resultReg) exprRegType1 (EVReg exprReg1) (EVReg exprReg2) relOp
   return (resultReg, TVBool)
 
 generateLLVMExpr (EAnd _ expr1 expr2) = do
@@ -223,7 +230,7 @@ generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
     (identReg, identRegType) <- lookupIdentRegisterAndType ident
     oneConstReg <- getNextRegisterAndIncrement
-    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
+    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1) 
     resultReg <- getNextRegisterAndIncrement
     addGenLLVM $ IBinOp (EVReg resultReg) (EVReg identReg) (EVReg oneConstReg) op
     insertIdentRegisterAndType ident resultReg identRegType
@@ -253,16 +260,8 @@ generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
         return (innerAcc ++ [ident], outerAcc)
       Init _ ident expr -> do
         identToReg <- gets identToRegisterAndType
-        if ident `Map.member` identToReg
-          then do
-            reg <- getNextRegisterAndIncrement
-            let llvmItemsType = bnfcTypeToLLVMType itemsType
-            addGenLLVM $ IAss (EVReg reg) (getValueDefaultInit llvmItemsType)
-            insertIdentRegisterAndType ident reg llvmItemsType
-            return (innerAcc ++ [ident], outerAcc)
-          else do
-            (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (innerAcc, outerAcc)
-            return (innerAcc ++ [ident], outerAcc)
+        (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (innerAcc, outerAcc)
+        return (innerAcc ++ [ident], outerAcc)
     )
     (inner, outer)
     items
