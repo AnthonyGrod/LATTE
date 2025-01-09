@@ -11,13 +11,9 @@ void printInt(int num) {
     printf("%d\n", num);
 }
 
-void printBool(bool b) {
-    printf("%s\n", b ? "true" : "false");
-}
-
 int readInt() {
     int num;
-    if (scanf("%d", &num) != 1) {
+    if (scanf("%d\n", &num) != 1) {
         fprintf(stderr, "Error reading integer.\n");
         exit(1);
     }

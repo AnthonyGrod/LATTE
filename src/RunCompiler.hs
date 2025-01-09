@@ -1,4 +1,4 @@
-module RunCompiler (interpretWithStdin, interpretWithFile, interpret) where
+module RunCompiler (compileWithArgs, compile) where
 
 import Prelude
 import Frontend.Frontend
@@ -6,17 +6,15 @@ import Parser.Par
 import Parser.Abs
 import Compiler.Backend
 
-interpretWithStdin :: String -> IO ()
-interpretWithStdin = interpret
 
-interpretWithFile :: String -> IO ()
-interpretWithFile file = readFile file >>= interpret
+compileWithArgs :: String -> IO ()
+compileWithArgs file = readFile file >>= compile file
 
 extractProgram :: Program -> [TopDef' BNFC'Position]
 extractProgram (Program _ p) = p
 
-interpret :: String -> IO ()
-interpret input = case pProgram (myLexer input) of
+compile :: String -> String -> IO ()
+compile fileNameWithPath input = case pProgram (myLexer input) of
   Left err -> 
     putStrLn "ERROR" >>
     putStrLn err
@@ -28,6 +26,7 @@ interpret input = case pProgram (myLexer input) of
         putStrLn "ERROR"
         putStrLn err
       Right tree -> do
-        result <- runCompiler program
+        putStrLn "OK"
+        result <- runCompiler program fileNameWithPath
         print ""
           

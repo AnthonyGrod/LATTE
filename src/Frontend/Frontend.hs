@@ -40,10 +40,8 @@ predefinedPrintsAndReads :: [(String, [SimpleType], SimpleType)]
 predefinedPrintsAndReads =
   [ ("printInt"   , [SimpleInt]   , SimpleVoid)
   , ("printString", [SimpleString], SimpleVoid)
-  , ("printBool"  , [SimpleBool]  , SimpleVoid)
   , ("readInt"    , []            , SimpleInt)
   , ("readString" , []            , SimpleString)
-  , ("readBool"   , []            , SimpleBool)
   ]
 
 emptyEnv :: Env

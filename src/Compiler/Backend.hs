@@ -15,6 +15,7 @@ import Control.Monad.State
 import Control.Monad.Except
 import Control.Monad.Identity
 import GHC.TopHandler (runIO)
+import System.Process (system)
 
 import qualified Data.List.Unique as LU
 import qualified Data.List as L
@@ -23,29 +24,13 @@ import Data.Map.Internal.Debug (node)
 import qualified Control.Monad
 
 
--- TODO: 
--- while DONE
--- if in while DONE
--- decl WITH INIT in block DONE
--- while with very simple body DONE
--- decrement and increment DONE
--- function calls basic DONE
--- function calls recursion DONE
--- print DONE partially
--- preprend function declarations DONE 
--- returns in if (and also void returns) DONE
--- lazy evaluation DONE
--- string manipulation
--- read
+runCompiler :: Program -> String -> IO RegisterAndType
+runCompiler program fileNameWithPath = runIO $ evalStateT (generateLLVMProgram program fileNameWithPath) initialState
 
 
-runCompiler :: Program -> IO RegisterAndType
-runCompiler program = runIO $ evalStateT (generateLLVMProgram program) initialState
-
-
-generateLLVMProgram :: Program -> CompilerM RegisterAndType
-generateLLVMProgram (Program _ topDefs) = do
-  -- extract all function signatures and add them to states - potentially dangerous
+generateLLVMProgram :: Program -> String -> CompilerM RegisterAndType
+generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
+  -- extract all function signatures and add them to states
   topDefFunIdents <- mapM (\(FnDef _ _ ident _ _) -> return ident) topDefs
   insertIdentFunSigs $ zip topDefFunIdents (map fromFnDefToFunValue topDefs)
 
@@ -61,7 +46,14 @@ generateLLVMProgram (Program _ topDefs) = do
   globalStrings <- gets globalStringMap
   let globalStringsLLVM = map (\(num, str) -> IStringGlobal (Ident $ show num) str) $ Map.toList globalStrings
   let genLLVMWithStrings = globalStringsLLVM ++ genLLVM
-  liftIO $ writeFile "output.ll" (unlines (map show genLLVMWithStrings))
+  let outputFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".ll"
+  let outputBCFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".bc"
+  liftIO $ do
+    writeFile outputFilePath (unlines (map show genLLVMWithStrings))
+    _ <- system $ "llvm-as " ++ outputFilePath ++ " -o " ++ outputBCFilePath
+    _ <- system $ "llvm-link " ++ outputFilePath ++ " lib/runtime.bc -o " ++ outputBCFilePath
+    return ()
+  liftIO $ writeFile outputFilePath (unlines (map show genLLVMWithStrings))
   return dummyReturnRegisterAndType
 
 
@@ -88,6 +80,7 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
   addGenLLVM IFunEp
   state <- get
   put $ setIdentToRegisterAndTypeToEmpty state
+  setDoNotReturn False
   return dummyReturnRegisterAndType
 
 
@@ -181,8 +174,16 @@ generateLLVMExpr (ERel _ expr1 oper expr2) = do
         GE _ -> RGE
         EQU _ -> RQU
         NE _ -> RE
-  addGenLLVM $ IRelOp (EVReg resultReg) exprRegType1 (EVReg exprReg1) (EVReg exprReg2) relOp
-  return (resultReg, TVBool)
+  case exprRegType1 of
+    TVInt -> do
+      addGenLLVM $ IRelOp (EVReg resultReg) TVInt (EVReg exprReg1) (EVReg exprReg2) relOp
+      return (resultReg, TVBool)
+    TVString -> do
+      addGenLLVM $ IFunCall (EVReg resultReg) TVBool (Ident "_strcmp") [(TVString, EVReg exprReg1), (TVString, EVReg exprReg2)]
+      return (resultReg, TVBool)
+    TVBool -> do
+      addGenLLVM $ IRelOp (EVReg resultReg) TVBool (EVReg exprReg1) (EVReg exprReg2) relOp
+      return (resultReg, TVBool)
 
 generateLLVMExpr (EAnd _ expr1 expr2) = generateLazyAndOr expr1 expr2 BAnd
 
@@ -302,27 +303,18 @@ generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
 
 generateLLVMStmt (Ret _ expr) (inner, outer) = do
   shouldNotReturn <- getDoNotReturn
-  if shouldNotReturn then do
-    (exprReg, exprRegType) <- generateLLVMExpr expr
+  (exprReg, exprRegType) <- generateLLVMExpr expr
+  Control.Monad.when shouldNotReturn $ do
     setRetValue (exprReg, exprRegType)
-    return (inner, outer)
-    else do
-      (exprReg, exprRegType) <- generateLLVMExpr expr
-      addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
-      setRetValue (exprReg, exprRegType)
-      return (inner, outer)
+  addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
+  setRetValue (exprReg, exprRegType)
+  return (inner, outer)
 
 generateLLVMStmt (VRet _) (inner, outer) = do
-  shouldNotReturn <- getDoNotReturn
-  if shouldNotReturn then do
-    voidReg <- getNextRegisterAndIncrement
-    setRetValue (-1, TVVoid)
-    return (inner, outer)
-    else do
-      voidReg <- getNextRegisterAndIncrement
-      addGenLLVM $ IFunRet (EVReg voidReg) TVVoid
-      setRetValue (-1, TVVoid)
-      return (inner, outer)
+  voidReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IFunRet (EVReg voidReg) TVVoid
+  setRetValue (-1, TVVoid)
+  return (inner, outer)
 
 generateLLVMStmt (Empty _) (inner, outer) = return (inner, outer)
 
@@ -338,8 +330,7 @@ generateLLVMStmt (Incr _ ident) (inner, outer) = do
     then return (inner, outer)
     else return (inner, Map.insert ident (reg, regType) outer)
 
-generateLLVMStmt (Decr _ ident) (inner, outer) = do -- TODO: needs changing outer
-  -- we need to change outer if the variable was declared in the outer block
+generateLLVMStmt (Decr _ ident) (inner, outer) = do
   (reg, regType) <- generateIncDec ident BSub
   if ident `elem` inner
     then return (inner, outer)
@@ -445,11 +436,20 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
           -- add return if return occured in both branches
           Control.Monad.when (retInTrue && retInFalse) $ do
               setRetValueToDummy
+              setDoNotReturn False
               retNewReg <- getNextRegisterAndIncrement
-              addGenLLVM $ IPhi (EVReg retNewReg) (snd retValueInTrue) (EVReg $ fst retValueInTrue, currentBl1) (EVReg $ fst retValueInFalse, currentBl2)
-              setRetValue (retNewReg, snd retValueInTrue)
-              unless doNotReturnOld $ do addRetValueGenLLVM
-
+              let returnType = snd retValueInTrue
+              case returnType of
+                TVVoid -> do
+                  addGenLLVM $ IFunRet EVVoid TVVoid
+                  setRetValue (-1, TVVoid)
+                  return ()
+                _ -> do
+                  newReg <- getNextRegisterAndIncrement
+                  addGenLLVM $ IAss (EVReg newReg) (getValueDefaultInit returnType)
+                  addGenLLVM $ IFunRet (EVReg newReg) returnType
+                  setRetValue (newReg, returnType)
+            
           -- accumplate outers
           let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
           return (inner, Map.union phiMap outer)

@@ -126,10 +126,8 @@ builtInFunctions :: [Instr]
 builtInFunctions =
   [ IFunDecl TVVoid (Ident "printString") [TVString]
   , IFunDecl TVVoid (Ident "printInt") [TVInt]
-  , IFunDecl TVVoid (Ident "printBool") [TVBool]
   , IFunDecl TVInt (Ident "readInt") []
   , IFunDecl TVString (Ident "readString") []
-  , IFunDecl TVBool (Ident "readBool") []
   , IFunDecl TVVoid (Ident "error") []
   , IFunDecl TVInt (Ident "_strlen") [TVString]
   , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
@@ -179,4 +177,3 @@ instance Show Instr where
     [] -> ")"
     _  -> concatMap (\arg -> show arg ++ ", ") (init args) ++ show (last args) ++ ")"
   show (IStringGlobal ident str) = "@." ++ extractIdent ident ++ " = private constant [" ++ show (length str + 1) ++ " x i8] c\"" ++ str ++ "\\00\""
-  show _ = "+++++++++"
