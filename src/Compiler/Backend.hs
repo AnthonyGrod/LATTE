@@ -84,11 +84,14 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
   return dummyReturnRegisterAndType
 
 
-generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType) -- TODO: Reduce
-generateLLVMBlock (Block _ stmts) = do
-  let comp = \(inner, outer) -> \s -> generateLLVMStmt s (inner, outer)
-  (innerRes, res) <- foldM comp ([], Map.empty) stmts
-  return res
+generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType)
+generateLLVMBlock (Block _ stmts) = go stmts ([], Map.empty)
+  where
+    go :: [Stmt] -> ([Ident], Map Ident RegisterAndType) -> CompilerM (Map Ident RegisterAndType)
+    go [] (_, changed) = return changed
+    go (stmt : rest) (currDecl, changed) = do
+      (newDecl, newChanged) <- generateLLVMStmt stmt (currDecl, changed)
+      go rest (newDecl, newChanged)
 
 
 generateLLVMExpr :: Expr -> CompilerM RegisterAndType
@@ -209,28 +212,25 @@ generateLLVMExpr (EApp _ ident exprs) = do
   return (regForFunRes, retType)
 
 
--- TODO: simplify
 generateLazyAndOr :: Expr -> Expr -> DBinOp -> CompilerM RegisterAndType
 generateLazyAndOr expr1 expr2 op = do
-  (reg1, typ1) <- generateLLVMExpr expr1
+  (reg1, _) <- generateLLVMExpr expr1
 
   currLabel <- getCurrentBasicBlockLabel
-  liftIO $ putStrLn $ "Current label: " ++ show currLabel
 
   trueReg <- getNextRegisterAndIncrement
   addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
+
   falseReg <- getNextRegisterAndIncrement
   addGenLLVM $ IAss (EVReg falseReg) (EVBool False)
 
   labelRight <- getNextLabelAndIncrement
   labelEnd   <- getNextLabelAndIncrement
-  resultReg <- getNextRegisterAndIncrement
+  resultReg  <- getNextRegisterAndIncrement
 
-  let jumpIf = case op of
-        BAnd -> (EVReg reg1, labelRight, labelEnd)
-        BOr  -> (EVReg reg1, labelEnd,   labelRight)
-
-  addGenLLVM $ IBr (fst3 jumpIf) (snd3 jumpIf) (thd3 jumpIf)
+  case op of
+    BAnd -> addGenLLVM $ IBr (EVReg reg1) labelRight labelEnd
+    BOr  -> addGenLLVM $ IBr (EVReg reg1) labelEnd   labelRight
 
   insertEmptyBasicBlock labelRight
   setcurrBasicBlockLabel labelRight
@@ -244,20 +244,15 @@ generateLazyAndOr expr1 expr2 op = do
   setcurrBasicBlockLabel labelEnd
   addGenLLVM $ ILabel labelEnd
 
-  let (shortCircuitLabel, shortCircuitVal) = case op of
-        BAnd -> (thd3 jumpIf, EVReg falseReg)
-        BOr  -> (thd3 jumpIf, EVReg trueReg)
+  let shortCircuitVal = case op of
+        BAnd -> EVReg falseReg
+        BOr  -> EVReg trueReg
 
   addGenLLVM $ IPhi (EVReg resultReg) TVBool
-    (shortCircuitVal, currLabel)
-    (EVReg reg2, labelRightEnd)
+                    (shortCircuitVal, currLabel)
+                    (EVReg reg2, labelRightEnd)
 
   return (resultReg, TVBool)
-
-  where
-    fst3 (x,_,_) = x
-    snd3 (_,y,_) = y
-    thd3 (_,_,z) = z
 
 
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
@@ -271,90 +266,87 @@ generateIncDec ident op = do
     return (resultReg, identRegType)
 
 
--- inner - list of variables already declared in the current block
--- outer - map of variables that were declared in the outer block and now changed in the current block
--- TODO: change inner and outer names
 generateLLVMStmt :: Stmt -> ([Ident], Map Ident RegisterAndType) -> CompilerM ([Ident], Map Ident RegisterAndType)
-generateLLVMStmt (Ass _ ident expr) (inner, outer) = do
-  (exprReg, exprRegType) <- generateLLVMExpr expr   -- generate code for expression and store result in register
+generateLLVMStmt (Ass _ ident expr) (currDecl, prevDeclAndChanged) = do
+  (exprReg, exprRegType) <- generateLLVMExpr expr
   insertIdentRegisterAndType ident exprReg exprRegType
-  (inner', outer') <- if ident `elem` inner
-                      then return (inner, outer)
-                      else return (inner, Map.insert ident (exprReg, exprRegType) outer)
-  return (inner', outer')
+  (currDecl', prevDeclAndChanged') <- if ident `elem` currDecl
+                      then return (currDecl, prevDeclAndChanged)
+                      else return (currDecl, Map.insert ident (exprReg, exprRegType) prevDeclAndChanged)
+  return (currDecl', prevDeclAndChanged')
 
-generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
-  (inner', outer') <- foldM
-    (\(innerAcc, outerAcc) declItem -> case declItem of
+generateLLVMStmt (Decl _ itemsType items) (currDecl, prevDeclAndChanged) = do
+  (currDecl', prevDeclAndChanged') <- foldM
+    (\(currDeclAcc, prevDeclAndChangedAcc) declItem -> case declItem of
       NoInit _ ident -> do
         reg <- getNextRegisterAndIncrement
         let llvmItemsType = bnfcTypeToLLVMType itemsType
         addGenLLVM $ IAss (EVReg reg) (getValueDefaultInit llvmItemsType)
         insertIdentRegisterAndType ident reg llvmItemsType
-        return (innerAcc ++ [ident], outerAcc)
+        return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
       Init _ ident expr -> do
         identToReg <- gets identToRegisterAndType
-        (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (innerAcc, outerAcc)
-        return (innerAcc ++ [ident], outerAcc)
+        (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (currDeclAcc, prevDeclAndChangedAcc)
+        return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
     )
-    (inner, outer)
+    (currDecl, prevDeclAndChanged)
     items
-  return (inner', outer')
+  return (currDecl', prevDeclAndChanged')
 
-generateLLVMStmt (Ret _ expr) (inner, outer) = do
+generateLLVMStmt (Ret _ expr) (currDecl, prevDeclAndChanged) = do
   shouldNotReturn <- getDoNotReturn
   (exprReg, exprRegType) <- generateLLVMExpr expr
   Control.Monad.when shouldNotReturn $ do
     setRetValue (exprReg, exprRegType)
   addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
   setRetValue (exprReg, exprRegType)
-  return (inner, outer)
+  return (currDecl, prevDeclAndChanged)
 
-generateLLVMStmt (VRet _) (inner, outer) = do
+generateLLVMStmt (VRet _) (currDecl, prevDeclAndChanged) = do
   voidReg <- getNextRegisterAndIncrement
   addGenLLVM $ IFunRet (EVReg voidReg) TVVoid
   setRetValue (-1, TVVoid)
-  return (inner, outer)
+  return (currDecl, prevDeclAndChanged)
 
-generateLLVMStmt (Empty _) (inner, outer) = return (inner, outer)
+generateLLVMStmt (Empty _) (currDecl, prevDeclAndChanged) = return (currDecl, prevDeclAndChanged)
 
-generateLLVMStmt (BStmt _ block) (inner, outer) = do
-  currIdentToRegisterAndType <- gets identToRegisterAndType
-  out <- generateLLVMBlock block
-  modify $ \s -> s { identToRegisterAndType = Map.union out currIdentToRegisterAndType }
-  return (inner, Map.union out outer)
+generateLLVMStmt (BStmt _ block) (currDecl, prevDeclAndChanged) = do
+  oldMap <- gets identToRegisterAndType
+  newMap <- generateLLVMBlock block
+  let mergedMap = Map.union newMap oldMap
+  let updatedResult = Map.union newMap prevDeclAndChanged
+  modify $ \st -> st { identToRegisterAndType = mergedMap }
+  return (currDecl, updatedResult)
 
-generateLLVMStmt (Incr _ ident) (inner, outer) = do
+generateLLVMStmt (Incr _ ident) (currDecl, prevDeclAndChanged) = do
   (reg, regType) <- generateIncDec ident BAdd
-  if ident `elem` inner
-    then return (inner, outer)
-    else return (inner, Map.insert ident (reg, regType) outer)
+  if ident `elem` currDecl
+    then return (currDecl, prevDeclAndChanged)
+    else return (currDecl, Map.insert ident (reg, regType) prevDeclAndChanged)
 
-generateLLVMStmt (Decr _ ident) (inner, outer) = do
+generateLLVMStmt (Decr _ ident) (currDecl, prevDeclAndChanged) = do
   (reg, regType) <- generateIncDec ident BSub
-  if ident `elem` inner
-    then return (inner, outer)
-    else return (inner, Map.insert ident (reg, regType) outer)
+  if ident `elem` currDecl
+    then return (currDecl, prevDeclAndChanged)
+    else return (currDecl, Map.insert ident (reg, regType) prevDeclAndChanged)
 
-generateLLVMStmt (SExp _ expr) (inner, outer) = do
+generateLLVMStmt (SExp _ expr) (currDecl, prevDeclAndChanged) = do
   (_, _) <- generateLLVMExpr expr
-  return (inner, outer)
+  return (currDecl, prevDeclAndChanged)
 
-generateLLVMStmt (Cond _ expr stmt) (inner, outer) = generateLLVMStmt (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition)) (inner, outer)
+generateLLVMStmt (Cond _ expr stmt) (currDecl, prevDeclAndChanged) = generateLLVMStmt (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition)) (currDecl, prevDeclAndChanged)
 
-generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
+generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = do
   (exprReg, _) <- generateLLVMExpr expr
-  -- check if the expr is ELitTrue or ELitFalse
-  -- check if if condition was literal true or false
   if isELitTrue expr
     then do
       (_, _) <- generateLLVMStmt stmt1 ([], Map.empty)
-      return (inner, outer)
+      return (currDecl, prevDeclAndChanged)
     else do
       if isELitFalse expr
         then do
           (_, _) <- generateLLVMStmt stmt2 ([], Map.empty)
-          return (inner, outer)
+          return (currDecl, prevDeclAndChanged)
         else do
           currState <- get
           doNotReturnOld <- getDoNotReturn
@@ -374,7 +366,7 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
           insertEmptyBasicBlock labelTrue
           setcurrBasicBlockLabel labelTrue
           addGenLLVM $ ILabel labelTrue
-          (_, outer1) <- generateLLVMStmt stmt1 ([], Map.empty)
+          (_, prevDeclAndChanged1) <- generateLLVMStmt stmt1 ([], Map.empty)
           currentBl1 <- getCurrentBasicBlockLabel
           addGenLLVM $ IBrJump labelEnd
           mm1 <- gets identToRegisterAndType
@@ -387,7 +379,7 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
           insertEmptyBasicBlock labelFalse
           setcurrBasicBlockLabel labelFalse
           addGenLLVM $ ILabel labelFalse
-          (_, outer2) <- generateLLVMStmt stmt2 ([], Map.empty)
+          (_, prevDeclAndChanged2) <- generateLLVMStmt stmt2 ([], Map.empty)
           currentBl2 <- getCurrentBasicBlockLabel
           addGenLLVM $ IBrJump labelEnd
           mm2 <- gets identToRegisterAndType
@@ -401,8 +393,8 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
           addGenLLVM $ ILabel labelEnd
 
           -- generate phi statements for variables that were changed in both branches
-          let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection outer1 outer2
-          let phiNodesWithTypes = map (\ident -> (ident, (outer1 Map.! ident, outer2 Map.! ident))) phiNodes
+          let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection prevDeclAndChanged1 prevDeclAndChanged2
+          let phiNodesWithTypes = map (\ident -> (ident, (prevDeclAndChanged1 Map.! ident, prevDeclAndChanged2 Map.! ident))) phiNodes
           phiRes <- forM phiNodesWithTypes $ \(ident, (reg1, reg2)) -> do
             let (r1, t1) = reg1
             let (r2, t2) = reg2
@@ -412,8 +404,8 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
             return (ident, (r1', t1))
 
           -- generate phi statements for variables that were changed in one branch
-          let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference outer1 outer2
-          let phiNodesWithTypes1 = map (\ident -> (ident, outer1 Map.! ident)) phiNodes1
+          let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference prevDeclAndChanged1 prevDeclAndChanged2
+          let phiNodesWithTypes1 = map (\ident -> (ident, prevDeclAndChanged1 Map.! ident)) phiNodes1
           phiRes1 <- forM phiNodesWithTypes1 $ \(ident, (reg, t)) -> do
             r' <- getNextRegisterAndIncrement
             (oldRegister, _) <- lookupIdentRegisterAndType ident
@@ -422,8 +414,8 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
             return (ident, (r', t))
 
           -- generate phi statements for variables that were changed in one branch
-          let phiNodes2 = LU.sortUniq $ Map.keys $ Map.difference outer2 outer1
-          let phiNodesWithTypes2 = map (\ident -> (ident, outer2 Map.! ident)) phiNodes2
+          let phiNodes2 = LU.sortUniq $ Map.keys $ Map.difference prevDeclAndChanged2 prevDeclAndChanged1
+          let phiNodesWithTypes2 = map (\ident -> (ident, prevDeclAndChanged2 Map.! ident)) phiNodes2
           phiRes2 <- forM phiNodesWithTypes2 $ \(ident, (reg, t)) -> do
             r' <- getNextRegisterAndIncrement
             (oldRegister, _) <- lookupIdentRegisterAndType ident
@@ -450,12 +442,12 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
                   addGenLLVM $ IFunRet (EVReg newReg) returnType
                   setRetValue (newReg, returnType)
             
-          -- accumplate outers
+          -- accumplate prevDeclAndChangeds
           let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
-          return (inner, Map.union phiMap outer)
+          return (currDecl, Map.union phiMap prevDeclAndChanged)
 
 -- TODO: Return flag does not work in while
-generateLLVMStmt (While _ expr stmt) (inner, outer) = do
+generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   oldState <- get
   oldRegisterAndTypeMap <- gets identToRegisterAndType
 
@@ -467,7 +459,7 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
 
   insertEmptyBasicBlock labelBody -- might not be the best idea but works for now
   setcurrBasicBlockLabel labelBody
-  (inner', outer') <- generateLLVMStmt stmt ([], Map.empty)
+  (currDecl', prevDeclAndChanged') <- generateLLVMStmt stmt ([], Map.empty)
   endingBodyLabel <- getCurrentBasicBlockLabel
 
   -- generate phi nodes for variables that were changed in the loop
@@ -475,8 +467,8 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   setcurrBasicBlockLabel labelBefore
   addGenLLVM $ IBrJump labelBefore
   addGenLLVM $ ILabel labelBefore
-  let phiNodes = LU.sortUniq $ Map.keys outer'
-  let phiNodesWithTypes = map (\ident -> (ident, outer' Map.! ident)) phiNodes
+  let phiNodes = LU.sortUniq $ Map.keys prevDeclAndChanged'
+  let phiNodesWithTypes = map (\ident -> (ident, prevDeclAndChanged' Map.! ident)) phiNodes
   phiRes <- forM phiNodesWithTypes $ \(ident, (reg, t)) -> do
     r' <- getNextRegisterAndIncrement
     let (oldRegister, _) = oldRegisterAndTypeMap Map.! ident
@@ -534,6 +526,6 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   -- set register counter to expr + 1
   modify $ \s -> s { nextFreeRegNum = expr + 1 }
 
-  return (inner, Map.union (Map.fromList phiRes) outer)
+  return (currDecl, Map.union (Map.fromList phiRes) prevDeclAndChanged)
 
 
