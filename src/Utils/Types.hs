@@ -18,7 +18,7 @@ showLabel :: Label -> String
 showLabel = ("Label" ++) . show
 
 dummyReturnRegisterAndType :: (Register, LLVMType)
-dummyReturnRegisterAndType = (0, TVVoid)
+dummyReturnRegisterAndType = (-1, TVVoid)
 
 data LLVMValue =
   EVInt Int |
@@ -122,8 +122,10 @@ builtInFunctions :: [Instr]
 builtInFunctions =
   [ IFunDecl TVVoid (Ident "printString") [TVString]
   , IFunDecl TVVoid (Ident "printInt") [TVInt]
+  , IFunDecl TVVoid (Ident "printBool") [TVBool]
   , IFunDecl TVInt (Ident "readInt") []
   , IFunDecl TVString (Ident "readString") []
+  , IFunDecl TVBool (Ident "readBool") []
   , IFunDecl TVVoid (Ident "error") []
   -- , IFunDecl TVInt (Ident "_strlen") [TVString] -- TODO while implementing strings
   -- , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
@@ -137,10 +139,13 @@ instance Show Instr where
       [] -> ") {"
       _  -> concatMap (\arg -> show (fst arg) ++ " " ++ show (snd arg) ++ ", ") (init args) ++ show (fst (last args)) ++ " " ++ show (snd (last args)) ++ ") {"
   show IFunEp = "}"
-  show (IFunRet val retType) =
-    "ret " ++ show retType ++ " " ++ show val
+  show (IFunRet val retType) = case retType of
+    TVVoid -> "ret void"
+    _ -> "ret " ++ show retType ++ " " ++ show val
   show (IAss reg val) =
-    show reg ++ " = " ++ show val
+    case val of
+      EVVoid -> ""
+      _ -> show reg ++ " = " ++ show val
   show (IBinOp dest op1 op2 binOp) =
     case binOp of
       BAnd -> show dest ++ " = and i1 " ++ show op1 ++ ", " ++ show op2

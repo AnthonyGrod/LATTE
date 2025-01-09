@@ -10,13 +10,15 @@ target triple = "x86_64-pc-linux-gnu"
 
 @.str = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
 @.str.1 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
-@.str.2 = private unnamed_addr constant [3 x i8] c"%d\00", align 1
+@.str.2 = private unnamed_addr constant [5 x i8] c"true\00", align 1
+@.str.3 = private unnamed_addr constant [6 x i8] c"false\00", align 1
+@.str.4 = private unnamed_addr constant [3 x i8] c"%d\00", align 1
 @stderr = external global %struct._IO_FILE*, align 8
-@.str.3 = private unnamed_addr constant [24 x i8] c"Error reading integer.\0A\00", align 1
+@.str.5 = private unnamed_addr constant [24 x i8] c"Error reading integer.\0A\00", align 1
 @stdin = external global %struct._IO_FILE*, align 8
-@.str.4 = private unnamed_addr constant [23 x i8] c"Error reading string.\0A\00", align 1
-@.str.5 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.6 = private unnamed_addr constant [15 x i8] c"Runtime error\0A\00", align 1
+@.str.6 = private unnamed_addr constant [23 x i8] c"Error reading string.\0A\00", align 1
+@.str.7 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
+@.str.8 = private unnamed_addr constant [15 x i8] c"Runtime error\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local void @printString(i8* noundef %0) #0 {
@@ -39,15 +41,28 @@ define dso_local void @printInt(i32 noundef %0) #0 {
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
+define dso_local void @printBool(i1 noundef zeroext %0) #0 {
+  %2 = alloca i8, align 1
+  %3 = zext i1 %0 to i8
+  store i8 %3, i8* %2, align 1
+  %4 = load i8, i8* %2, align 1
+  %5 = trunc i8 %4 to i1
+  %6 = zext i1 %5 to i64
+  %7 = select i1 %5, i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.str.2, i64 0, i64 0), i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.str.3, i64 0, i64 0)
+  %8 = call i32 (i8*, ...) @printf(i8* noundef getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i64 0, i64 0), i8* noundef %7)
+  ret void
+}
+
+; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @readInt() #0 {
   %1 = alloca i32, align 4
-  %2 = call i32 (i8*, ...) @__isoc99_scanf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.2, i64 0, i64 0), i32* noundef %1)
+  %2 = call i32 (i8*, ...) @__isoc99_scanf(i8* noundef getelementptr inbounds ([3 x i8], [3 x i8]* @.str.4, i64 0, i64 0), i32* noundef %1)
   %3 = icmp ne i32 %2, 1
   br i1 %3, label %4, label %7
 
 4:                                                ; preds = %0
   %5 = load %struct._IO_FILE*, %struct._IO_FILE** @stderr, align 8
-  %6 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %5, i8* noundef getelementptr inbounds ([24 x i8], [24 x i8]* @.str.3, i64 0, i64 0))
+  %6 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %5, i8* noundef getelementptr inbounds ([24 x i8], [24 x i8]* @.str.5, i64 0, i64 0))
   call void @exit(i32 noundef 1) #5
   unreachable
 
@@ -76,14 +91,14 @@ define dso_local i8* @readString() #0 {
 
 7:                                                ; preds = %0
   %8 = load %struct._IO_FILE*, %struct._IO_FILE** @stderr, align 8
-  %9 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %8, i8* noundef getelementptr inbounds ([23 x i8], [23 x i8]* @.str.4, i64 0, i64 0))
+  %9 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %8, i8* noundef getelementptr inbounds ([23 x i8], [23 x i8]* @.str.6, i64 0, i64 0))
   call void @exit(i32 noundef 1) #5
   unreachable
 
 10:                                               ; preds = %0
   %11 = load i8*, i8** %1, align 8
   %12 = load i8*, i8** %1, align 8
-  %13 = call i64 @strcspn(i8* noundef %12, i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.5, i64 0, i64 0)) #7
+  %13 = call i64 @strcspn(i8* noundef %12, i8* noundef getelementptr inbounds ([2 x i8], [2 x i8]* @.str.7, i64 0, i64 0)) #7
   %14 = getelementptr inbounds i8, i8* %11, i64 %13
   store i8 0, i8* %14, align 1
   %15 = load i8*, i8** %1, align 8
@@ -101,7 +116,7 @@ declare i64 @strcspn(i8* noundef, i8* noundef) #4
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local void @error() #0 {
   %1 = load %struct._IO_FILE*, %struct._IO_FILE** @stderr, align 8
-  %2 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %1, i8* noundef getelementptr inbounds ([15 x i8], [15 x i8]* @.str.6, i64 0, i64 0))
+  %2 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* noundef %1, i8* noundef getelementptr inbounds ([15 x i8], [15 x i8]* @.str.8, i64 0, i64 0))
   call void @exit(i32 noundef 1) #5
   unreachable
 }

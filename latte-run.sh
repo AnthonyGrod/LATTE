@@ -29,6 +29,7 @@ llvm-link "$OUTPUT_BC" "$RUNTIME_BC" -o "$LINKED_BC"
 
 
 # Step 5: Always Run the LLVM bitcode
-lli "$LINKED_BC"
+
+lli "$LINKED_BC" > output.txt
 
 exit 0

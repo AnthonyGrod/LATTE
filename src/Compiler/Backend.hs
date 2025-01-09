@@ -20,6 +20,7 @@ import qualified Data.List.Unique as LU
 import qualified Data.List as L
 import Debug.Trace
 import Data.Map.Internal.Debug (node)
+import qualified Control.Monad
 
 
 -- TODO: 
@@ -32,7 +33,7 @@ import Data.Map.Internal.Debug (node)
 -- function calls recursion DONE
 -- print DONE partially
 -- preprend function declarations DONE 
--- returns in if
+-- returns in if (and also void returns)
 -- read
 -- string manipulation
 -- lazy evaluation
@@ -44,17 +45,22 @@ runCompiler program = runIO $ evalStateT (generateLLVMProgram program) initialSt
 
 generateLLVMProgram :: Program -> CompilerM RegisterAndType
 generateLLVMProgram (Program _ topDefs) = do
-  mapM_ addGenLLVM builtInFunctions
-  let funVals = map fromFunDeclToFunValue builtInFunctions
-  builtInFunctionIdents <- mapM (\(IFunDecl _ ident _) -> return ident) builtInFunctions
-  -- extract all function signatures and add their declarations to the beginning of the program and add them to state
-  insertIdentFunSigs $ zip builtInFunctionIdents funVals
-
   -- extract all function signatures and add them to states - potentially dangerous
   topDefFunIdents <- mapM (\(FnDef _ _ ident _ _) -> return ident) topDefs
   insertIdentFunSigs $ zip topDefFunIdents (map fromFnDefToFunValue topDefs)
-  -- generate declarations
-  -- mapM_ (addGenLLVM . fromLLVMValueToInstr . fromFnDefToFunValue) topDefs
+
+  let builtInFunctionsFiltered = filter (\(IFunDecl _ ident _) -> ident `notElem` topDefFunIdents) builtInFunctions
+  let funValsFiltered = map fromFunDeclToFunValue builtInFunctionsFiltered
+  mapM_ addGenLLVM builtInFunctionsFiltered
+  builtInFunctionIdents <- mapM (\(IFunDecl _ ident _) -> return ident) builtInFunctionsFiltered
+  insertIdentFunSigs $ zip builtInFunctionIdents funValsFiltered
+  -- -- delete those idents from buildInFunctionIdents that are already defined in the program
+  -- let builtInFunctionIdents' = filter (\ident -> notElem ident topDefFunIdents) builtInFunctionIdents
+  -- let funVals' = filter (\(EVFun _ ident _ _) -> elem ident builtInFunctionIdents') funVals
+  -- liftIO $ putStrLn $ show builtInFunctionIdents'
+  -- liftIO $ putStrLn $ show funVals'
+  -- extract all function signatures and add their declarations to the beginning of the program and add them to state
+  -- insertIdentFunSigs $ zip builtInFunctionIdents funVals
 
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
   genLLVM <- getGenLLVM
@@ -80,6 +86,8 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
   addGenLLVM $ IFunPr (bnfcTypeToLLVMType retType) ident argTypeRegPairs
   addGenLLVM $ ILabel label
   _ <- generateLLVMBlock block
+  Control.Monad.when (bnfcTypeToLLVMType retType == TVVoid && not (doesBlockContainVRet block)) $ do
+    addGenLLVM $ IFunRet EVVoid TVVoid
   addGenLLVM IFunEp
   state <- get
   put $ setIdentToRegisterAndTypeToEmpty state
@@ -88,10 +96,8 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
 
 generateLLVMBlock :: Block -> CompilerM (Map Ident RegisterAndType) -- TODO: Reduce
 generateLLVMBlock (Block _ stmts) = do
-  liftIO $ print $ "stmts: " ++ show stmts
   let comp = \(inner, outer) -> \s -> generateLLVMStmt s (inner, outer)
   (innerRes, res) <- foldM comp ([], Map.empty) stmts
-  liftIO $ print $ "res: " ++ show res
   return res
 
 
@@ -104,29 +110,29 @@ generateLLVMExpr (EVar _ ident) = do
 
 generateLLVMExpr (ELitInt _ i) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVInt $ fromIntegral i) 
+  addGenLLVM $ IAss (EVReg reg) (EVInt $ fromIntegral i)
   return (reg, TVInt)
 
 generateLLVMExpr (ELitTrue _) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool True) 
+  addGenLLVM $ IAss (EVReg reg) (EVBool True)
   return (reg, TVBool)
 
 generateLLVMExpr (ELitFalse _) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool False) 
+  addGenLLVM $ IAss (EVReg reg) (EVBool False)
   return (reg, TVBool)
 
 generateLLVMExpr (EString _ s) = do
   reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVString s) 
+  addGenLLVM $ IAss (EVReg reg) (EVString s)
   return (reg, TVString)
 
 generateLLVMExpr (Neg _ expr) = do
   (exprReg, exprRegType) <- generateLLVMExpr expr
   -- generate negative by subtracting from 0
   zeroReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0) 
+  addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0)
   resReg <- getNextRegisterAndIncrement
   addGenLLVM $ IBinOp (EVReg resReg) (EVReg zeroReg) (EVReg exprReg) BSub
   return (resReg, exprRegType)
@@ -134,11 +140,11 @@ generateLLVMExpr (Neg _ expr) = do
 generateLLVMExpr (Not _ expr) = do
   (exprReg, exprRegType) <- generateLLVMExpr expr
   trueReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg trueReg) (EVBool True) 
+  addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
   resReg <- getNextRegisterAndIncrement
   addGenLLVM $ IRelOp (EVReg resReg) exprRegType (EVReg exprReg) (EVReg trueReg) RQU
   return (resReg, TVBool)
-  
+
 
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1
@@ -230,7 +236,7 @@ generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
     (identReg, identRegType) <- lookupIdentRegisterAndType ident
     oneConstReg <- getNextRegisterAndIncrement
-    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1) 
+    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
     resultReg <- getNextRegisterAndIncrement
     addGenLLVM $ IBinOp (EVReg resultReg) (EVReg identReg) (EVReg oneConstReg) op
     insertIdentRegisterAndType ident resultReg identRegType
@@ -244,8 +250,8 @@ generateLLVMStmt :: Stmt -> ([Ident], Map Ident RegisterAndType) -> CompilerM ([
 generateLLVMStmt (Ass _ ident expr) (inner, outer) = do
   (exprReg, exprRegType) <- generateLLVMExpr expr   -- generate code for expression and store result in register
   insertIdentRegisterAndType ident exprReg exprRegType
-  (inner', outer') <- if ident `elem` inner 
-                      then return (inner, outer) 
+  (inner', outer') <- if ident `elem` inner
+                      then return (inner, outer)
                       else return (inner, Map.insert ident (exprReg, exprRegType) outer)
   return (inner', outer')
 
@@ -268,14 +274,29 @@ generateLLVMStmt (Decl _ itemsType items) (inner, outer) = do
   return (inner', outer')
 
 generateLLVMStmt (Ret _ expr) (inner, outer) = do
-  (exprReg, exprRegType) <- generateLLVMExpr expr
-  addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
-  return (inner, outer)
+  shouldNotReturn <- getDoNotReturn
+  if shouldNotReturn then do
+    (exprReg, exprRegType) <- generateLLVMExpr expr
+    setRetValue (exprReg, exprRegType)
+    return (inner, outer)
+    else do
+      (exprReg, exprRegType) <- generateLLVMExpr expr
+      addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
+      setRetValue (exprReg, exprRegType)
+      return (inner, outer)
+
 
 generateLLVMStmt (VRet _) (inner, outer) = do
-  voidReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IFunRet (EVReg voidReg) TVVoid
-  return (inner, outer)
+  shouldNotReturn <- getDoNotReturn
+  if shouldNotReturn then do
+    voidReg <- getNextRegisterAndIncrement
+    setRetValue (-1, TVVoid)
+    return (inner, outer)
+    else do
+      voidReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IFunRet (EVReg voidReg) TVVoid
+      setRetValue (-1, TVVoid)
+      return (inner, outer)
 
 generateLLVMStmt (Empty _) (inner, outer) = return (inner, outer)
 
@@ -307,8 +328,9 @@ generateLLVMStmt (Cond _ expr stmt) (inner, outer) = generateLLVMStmt (CondElse 
 generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   (exprReg, _) <- generateLLVMExpr expr
   currState <- get
+  doNotReturnOld <- getDoNotReturn
+  setDoNotReturn True
 
-  liftIO $ print ("currentLabel: " ++ show (nextFreeLabelNum currState))
   labelTrue <- getNextLabelAndIncrement
   labelFalse <- getNextLabelAndIncrement
   labelEnd  <- getNextLabelAndIncrement
@@ -328,6 +350,10 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   addGenLLVM $ IBrJump labelEnd
   mm1 <- gets identToRegisterAndType
   modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
+  retInTrue <- checkIfReturnValueNotDummy
+  retValueInTrue <- getRetValue
+  setRetValueToDummy
+
 
   -- generate code for false branch
   insertEmptyBasicBlock labelFalse
@@ -338,6 +364,9 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   addGenLLVM $ IBrJump labelEnd
   mm2 <- gets identToRegisterAndType
   modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
+  retInFalse <- checkIfReturnValueNotDummy
+  retValueInFalse <- getRetValue
+  setRetValueToDummy
 
   insertEmptyBasicBlock labelEnd
   setcurrBasicBlockLabel labelEnd
@@ -374,10 +403,39 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
     insertIdentRegisterAndType ident r' t
     return (ident, (r', t))
 
+  setDoNotReturn doNotReturnOld
+
+  -- check if if condition was literal true or false
+  if isELitTrue expr
+    then do
+      Control.Monad.when retInTrue $ do -- TODO: dummy initialize
+          let (reg, t) = retValueInTrue
+          retNewReg <- getNextRegisterAndIncrement
+          addGenLLVM $ IPhi (EVReg retNewReg) t (EVReg reg, currentBl1) (EVReg reg, currentBl2)
+          setRetValue (retNewReg, t)
+          -- addRetValueGenLLVM
+    else do
+      Control.Monad.when (isELitFalse expr) $ do
+          Control.Monad.when retInFalse $ do
+            let (reg, t) = retValueInFalse
+            retNewReg <- getNextRegisterAndIncrement
+            addGenLLVM $ IPhi (EVReg retNewReg) t (EVReg reg, currentBl1) (EVReg reg, currentBl2)
+            setRetValue (retNewReg, t)
+            -- addRetValueGenLLVM
+
+  -- add return if return occured in both branches
+  Control.Monad.when (retInTrue && retInFalse) $ do
+      setRetValueToDummy
+      retNewReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IPhi (EVReg retNewReg) (snd retValueInTrue) (EVReg $ fst retValueInTrue, currentBl1) (EVReg $ fst retValueInFalse, currentBl2)
+      setRetValue (retNewReg, snd retValueInTrue)
+      unless doNotReturnOld $ do addRetValueGenLLVM
+
   -- accumplate outers
   let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
   return (inner, Map.union phiMap outer)
 
+-- TODO: Return flag does not work in while
 generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   oldState <- get
   oldRegisterAndTypeMap <- gets identToRegisterAndType
@@ -392,9 +450,6 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   setcurrBasicBlockLabel labelBody
   (inner', outer') <- generateLLVMStmt stmt ([], Map.empty)
   endingBodyLabel <- getCurrentBasicBlockLabel
-  liftIO $ print $ "----outer----: " ++ show outer
-  -- print current next register number
-  liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
 
   -- generate phi nodes for variables that were changed in the loop
   insertEmptyBasicBlock labelBefore
@@ -402,11 +457,9 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   addGenLLVM $ IBrJump labelBefore
   addGenLLVM $ ILabel labelBefore
   let phiNodes = LU.sortUniq $ Map.keys outer'
-  liftIO $ print $ "----phiNodes----: " ++ show phiNodes
   let phiNodesWithTypes = map (\ident -> (ident, outer' Map.! ident)) phiNodes
   phiRes <- forM phiNodesWithTypes $ \(ident, (reg, t)) -> do
     r' <- getNextRegisterAndIncrement
-    liftIO $ print $ "----r'----: " ++ show r'
     let (oldRegister, _) = oldRegisterAndTypeMap Map.! ident
     addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currLabel) (EVReg reg, endingBodyLabel)
     insertIdentRegisterAndType ident r' t
@@ -423,9 +476,6 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   instrBeforeAcc <- getBasicBlockGenLLVM labelBefore -- get generated phi instructions
   instrCondAcc <- getBasicBlockGenLLVM labelCond -- get cond generated LLVM
 
-  liftIO $ print $ "----instrBeforeAcc----: " ++ show instrBeforeAcc
-  liftIO $ print $ "----instrCondAcc----: " ++ show instrCondAcc
-
   put oldState -- restore state before the loop
   modify $ \s -> s { nextFreeLabelNum = labelEnd + 1 }
   -- increment label count by 2 because of the before and cond labels that already exist
@@ -440,14 +490,12 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   mapM_ addGenLLVM instrCondAcc
 
   instrBef <- getBasicBlockGenLLVM labelBefore
-  liftIO $ print $ "----instrBef----: " ++ show instrBef
   instrC <- getBasicBlockGenLLVM labelCond
-  liftIO $ print $ "----instrC----: " ++ show instrC
 
   insertEmptyBasicBlock labelBody
   setcurrBasicBlockLabel labelBody
   addGenLLVM $ ILabel labelBody
-  
+
   -- insert state variables by phi
   forM_ phiRes $ \(ident, (reg, t)) -> do
     insertIdentRegisterAndType ident reg t
@@ -463,13 +511,10 @@ generateLLVMStmt (While _ expr stmt) (inner, outer) = do
   setcurrBasicBlockLabel labelEnd
   addGenLLVM $ ILabel labelEnd
 
-  liftIO $ print $ "----phiRes----: " ++ show phiRes
-  --print current register number
-  liftIO $ print $ "----nextFreeRegNum----: " ++ show (nextFreeRegNum oldState)
 
   -- set register counter to expr + 1
   modify $ \s -> s { nextFreeRegNum = expr + 1 }
 
   return (inner, Map.union (Map.fromList phiRes) outer)
-  
+
 

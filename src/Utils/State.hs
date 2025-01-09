@@ -22,6 +22,8 @@ data CompileState = CompileState
   , identToRegisterAndType :: Map Ident RegisterAndType
   , identToFunSig    :: Map Ident LLVMValue
   , allInstructions  :: [Instr]
+  , returnValue      :: RegisterAndType
+  , doNotReturn      :: Bool
   -- , bbPredecessor    :: Label
   }
 
@@ -34,6 +36,8 @@ initialState = CompileState
   , identToRegisterAndType = Map.empty
   , identToFunSig = Map.empty
   , allInstructions = []
+  , returnValue = dummyReturnRegisterAndType
+  , doNotReturn = False
   -- , bbPredecessor = -1
   }
 
@@ -58,6 +62,33 @@ emptyBasicBlock label = BasicBlock
   -- , varsChangedFromPredBlock = Map.empty
   }
 
+checkIfReturnValueNotDummy :: CompilerM Bool
+checkIfReturnValueNotDummy = do
+  state <- get
+  return $ returnValue state /= dummyReturnRegisterAndType
+
+addRetValueGenLLVM :: CompilerM ()
+addRetValueGenLLVM = do
+  state <- get
+  let (reg, regType) = returnValue state
+  if (reg, regType) == dummyReturnRegisterAndType
+    then return ()
+    else addGenLLVM $ IFunRet (EVReg reg) regType
+
+setRetValueToDummy :: CompilerM ()
+setRetValueToDummy = modify $ \st -> st { returnValue = dummyReturnRegisterAndType }
+
+setRetValue :: RegisterAndType -> CompilerM ()
+setRetValue regAndType = modify $ \st -> st { returnValue = regAndType }
+
+getRetValue :: CompilerM RegisterAndType
+getRetValue = gets returnValue
+
+setDoNotReturn :: Bool -> CompilerM ()
+setDoNotReturn b = modify $ \st -> st { doNotReturn = b }
+
+getDoNotReturn :: CompilerM Bool
+getDoNotReturn = gets doNotReturn
 
 getNextLabelAndIncrement :: CompilerM Int
 getNextLabelAndIncrement = do
@@ -176,36 +207,20 @@ insertInstrToCurrBasicBlock instr = do
   let newBB = currBB { bbInstructions = bbInstructions currBB ++ [instr] }
   put state { basicBlocks = Map.insert currLabel newBB bb }
 
--- insertVarDeclaredInCurrBlock :: Ident -> CompilerM ()
--- insertVarDeclaredInCurrBlock ident = do
---   state <- get
---   let currLabel = currBasicBlockLabel state
---   let bb = basicBlocks state
---   let currBB = bb Map.! currLabel
---   let newBB = currBB { varsDeclaredInCurrBlock = varsDeclaredInCurrBlock currBB ++ [ident] }
---   put state { basicBlocks = Map.insert currLabel newBB bb }
-
--- insertVarChangedFromPredBlock :: Ident -> RegisterAndType -> CompilerM ()
--- insertVarChangedFromPredBlock ident regAndType = do
---   state <- get
---   let currLabel = currBasicBlockLabel state
---   let bb = basicBlocks state
---   let currBB = bb Map.! currLabel
---   let newBB = currBB { varsChangedFromPredBlock = Map.insert ident (regAndType, currLabel) (varsChangedFromPredBlock currBB) }
---   put state { basicBlocks = Map.insert currLabel newBB bb }
-
--- insertVarChangedFromPredBlockToBlock :: Label -> Ident -> RegisterAndType -> Label -> CompilerM ()
--- insertVarChangedFromPredBlockToBlock blockLabel ident regAndType label = do
---   bb <- getBasicBlock blockLabel
---   let newBB = bb { varsChangedFromPredBlock = Map.insert ident (regAndType, label) (varsChangedFromPredBlock bb) }
---   insertBasicBlock newBB
-
-
--- isIdentInVarsDeclaredInCurrBlock :: Ident -> CompilerM Bool
--- isIdentInVarsDeclaredInCurrBlock ident = do
---   state <- get
---   let currLabel = currBasicBlockLabel state
---   let bb = basicBlocks state
---   let currBB = bb Map.! currLabel
---   return $ elem ident (varsDeclaredInCurrBlock currBB)
-
+-- copyRegisterToNextFree :: Register -> LLVMType -> CompilerM Register
+-- copyRegisterToNextFree reg typ = do
+--   case typ of
+--     TVInt -> do
+--       zeroReg <- getNextRegisterAndIncrement
+--       addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0)
+--       newReg <- getNextRegisterAndIncrement
+--       addGenLLVM $ IBinOp (EVReg newReg) (EVReg zeroReg) (EVReg reg) BAdd
+--       return newReg
+--     TVBool -> do
+--       falseReg <- getNextRegisterAndIncrement
+--       addGenLLVM $ IBinOp (EVReg falseReg) (EVBool False) (EVBool False) BOr
+--       newReg <- getNextRegisterAndIncrement
+--       addGenLLVM $ IBinOp (EVReg newReg) (EVReg falseReg) (EVReg reg) BOr
+--       return newReg
+--     TVVoid -> return reg
+--     _ -> error "Cannot copy register of this type" -- TODO: String manipulation

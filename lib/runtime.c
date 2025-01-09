@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 void printString(char* str) {
     printf("%s\n", str);
@@ -8,6 +9,10 @@ void printString(char* str) {
 
 void printInt(int num) {
     printf("%d\n", num);
+}
+
+void printBool(bool b) {
+    printf("%s\n", b ? "true" : "false");
 }
 
 int readInt() {
