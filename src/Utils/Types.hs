@@ -131,10 +131,10 @@ builtInFunctions =
   , IFunDecl TVString (Ident "readString") []
   , IFunDecl TVBool (Ident "readBool") []
   , IFunDecl TVVoid (Ident "error") []
-  -- , IFunDecl TVInt (Ident "_strlen") [TVString] -- TODO while implementing strings
-  -- , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
-  -- , IFunDecl TVInt (Ident "_strcmp") [TVString, TVString]
-  -- , IFunDecl TVString (Ident "_strcpy") [TVString, TVString]
+  , IFunDecl TVInt (Ident "_strlen") [TVString]
+  , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
+  , IFunDecl TVBool (Ident "_strcmp") [TVString, TVString]
+  , IFunDecl TVString (Ident "_strcpy") [TVString, TVString]
   ]
 
 instance Show Instr where

@@ -162,8 +162,13 @@ generateLLVMExpr (EAdd _ expr1 addOp expr2) = do
   let binOp = case addOp of
         Plus _ -> BAdd
         Minus _ -> BSub
-  addGenLLVM $ IBinOp (EVReg resultReg) (EVReg exprReg1) (EVReg exprReg2) binOp
-  return (resultReg, exprRegType1)
+  case exprRegType1 of
+    TVInt -> do
+      addGenLLVM $ IBinOp (EVReg resultReg) (EVReg exprReg1) (EVReg exprReg2) binOp
+      return (resultReg, exprRegType1)
+    TVString -> do
+      addGenLLVM $ IFunCall (EVReg resultReg) TVString (Ident "_strcat") [(TVString, EVReg exprReg1), (TVString, EVReg exprReg2)]
+      return (resultReg, exprRegType1)
 
 generateLLVMExpr (ERel _ expr1 oper expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1

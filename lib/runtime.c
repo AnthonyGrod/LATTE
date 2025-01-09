@@ -44,11 +44,22 @@ int _strlen(char* str) {
 }
 
 char* _strcat(char* dest, char* src) {
-    return strcat(dest, src);
+    if (!dest || !src) {
+        return NULL;
+    }
+    size_t len1 = strlen(dest);
+    size_t len2 = strlen(src);
+    char* new_str = malloc(len1 + len2 + 1);
+    if (!new_str) {
+        return NULL;
+    }
+    strcpy(new_str, dest);
+    strcat(new_str, src);
+    return new_str;
 }
 
-int _strcmp(char* str1, char* str2) {
-    return strcmp(str1, str2);
+bool _strcmp(char* str1, char* str2) {
+    return strcmp(str1, str2) == 0;
 }
 
 char* _strcpy(char* dest, char* src) {

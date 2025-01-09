@@ -138,19 +138,70 @@ declare i64 @strlen(i8* noundef) #4
 define dso_local i8* @_strcat(i8* noundef %0, i8* noundef %1) #0 {
   %3 = alloca i8*, align 8
   %4 = alloca i8*, align 8
-  store i8* %0, i8** %3, align 8
-  store i8* %1, i8** %4, align 8
-  %5 = load i8*, i8** %3, align 8
-  %6 = load i8*, i8** %4, align 8
-  %7 = call i8* @strcat(i8* noundef %5, i8* noundef %6) #6
-  ret i8* %7
+  %5 = alloca i8*, align 8
+  %6 = alloca i64, align 8
+  %7 = alloca i64, align 8
+  %8 = alloca i8*, align 8
+  store i8* %0, i8** %4, align 8
+  store i8* %1, i8** %5, align 8
+  %9 = load i8*, i8** %4, align 8
+  %10 = icmp ne i8* %9, null
+  br i1 %10, label %11, label %14
+
+11:                                               ; preds = %2
+  %12 = load i8*, i8** %5, align 8
+  %13 = icmp ne i8* %12, null
+  br i1 %13, label %15, label %14
+
+14:                                               ; preds = %11, %2
+  store i8* null, i8** %3, align 8
+  br label %36
+
+15:                                               ; preds = %11
+  %16 = load i8*, i8** %4, align 8
+  %17 = call i64 @strlen(i8* noundef %16) #7
+  store i64 %17, i64* %6, align 8
+  %18 = load i8*, i8** %5, align 8
+  %19 = call i64 @strlen(i8* noundef %18) #7
+  store i64 %19, i64* %7, align 8
+  %20 = load i64, i64* %6, align 8
+  %21 = load i64, i64* %7, align 8
+  %22 = add i64 %20, %21
+  %23 = add i64 %22, 1
+  %24 = call noalias i8* @malloc(i64 noundef %23) #6
+  store i8* %24, i8** %8, align 8
+  %25 = load i8*, i8** %8, align 8
+  %26 = icmp ne i8* %25, null
+  br i1 %26, label %28, label %27
+
+27:                                               ; preds = %15
+  store i8* null, i8** %3, align 8
+  br label %36
+
+28:                                               ; preds = %15
+  %29 = load i8*, i8** %8, align 8
+  %30 = load i8*, i8** %4, align 8
+  %31 = call i8* @strcpy(i8* noundef %29, i8* noundef %30) #6
+  %32 = load i8*, i8** %8, align 8
+  %33 = load i8*, i8** %5, align 8
+  %34 = call i8* @strcat(i8* noundef %32, i8* noundef %33) #6
+  %35 = load i8*, i8** %8, align 8
+  store i8* %35, i8** %3, align 8
+  br label %36
+
+36:                                               ; preds = %28, %27, %14
+  %37 = load i8*, i8** %3, align 8
+  ret i8* %37
 }
+
+; Function Attrs: nounwind
+declare i8* @strcpy(i8* noundef, i8* noundef) #3
 
 ; Function Attrs: nounwind
 declare i8* @strcat(i8* noundef, i8* noundef) #3
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local i32 @_strcmp(i8* noundef %0, i8* noundef %1) #0 {
+define dso_local zeroext i1 @_strcmp(i8* noundef %0, i8* noundef %1) #0 {
   %3 = alloca i8*, align 8
   %4 = alloca i8*, align 8
   store i8* %0, i8** %3, align 8
@@ -158,7 +209,8 @@ define dso_local i32 @_strcmp(i8* noundef %0, i8* noundef %1) #0 {
   %5 = load i8*, i8** %3, align 8
   %6 = load i8*, i8** %4, align 8
   %7 = call i32 @strcmp(i8* noundef %5, i8* noundef %6) #7
-  ret i32 %7
+  %8 = icmp eq i32 %7, 0
+  ret i1 %8
 }
 
 ; Function Attrs: nounwind readonly willreturn
@@ -175,9 +227,6 @@ define dso_local i8* @_strcpy(i8* noundef %0, i8* noundef %1) #0 {
   %7 = call i8* @strcpy(i8* noundef %5, i8* noundef %6) #6
   ret i8* %7
 }
-
-; Function Attrs: nounwind
-declare i8* @strcpy(i8* noundef, i8* noundef) #3
 
 attributes #0 = { noinline nounwind optnone uwtable "frame-pointer"="all" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
 attributes #1 = { "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
