@@ -33,10 +33,10 @@ import qualified Control.Monad
 -- function calls recursion DONE
 -- print DONE partially
 -- preprend function declarations DONE 
--- returns in if (and also void returns)
+-- returns in if (and also void returns) DONE
+-- lazy evaluation
 -- read
 -- string manipulation
--- lazy evaluation
 
 
 runCompiler :: Program -> IO RegisterAndType
@@ -54,13 +54,6 @@ generateLLVMProgram (Program _ topDefs) = do
   mapM_ addGenLLVM builtInFunctionsFiltered
   builtInFunctionIdents <- mapM (\(IFunDecl _ ident _) -> return ident) builtInFunctionsFiltered
   insertIdentFunSigs $ zip builtInFunctionIdents funValsFiltered
-  -- -- delete those idents from buildInFunctionIdents that are already defined in the program
-  -- let builtInFunctionIdents' = filter (\ident -> notElem ident topDefFunIdents) builtInFunctionIdents
-  -- let funVals' = filter (\(EVFun _ ident _ _) -> elem ident builtInFunctionIdents') funVals
-  -- liftIO $ putStrLn $ show builtInFunctionIdents'
-  -- liftIO $ putStrLn $ show funVals'
-  -- extract all function signatures and add their declarations to the beginning of the program and add them to state
-  -- insertIdentFunSigs $ zip builtInFunctionIdents funVals
 
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
   genLLVM <- getGenLLVM
@@ -142,9 +135,8 @@ generateLLVMExpr (Not _ expr) = do
   trueReg <- getNextRegisterAndIncrement
   addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
   resReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IRelOp (EVReg resReg) exprRegType (EVReg exprReg) (EVReg trueReg) RQU
+  addGenLLVM $ IRelOp (EVReg resReg) exprRegType (EVReg exprReg) (EVReg trueReg) RE
   return (resReg, TVBool)
-
 
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1
@@ -181,25 +173,18 @@ generateLLVMExpr (ERel _ expr1 oper expr2) = do
   addGenLLVM $ IRelOp (EVReg resultReg) exprRegType1 (EVReg exprReg1) (EVReg exprReg2) relOp
   return (resultReg, TVBool)
 
-generateLLVMExpr (EAnd _ expr1 expr2) = do
-  (exprReg1, exprRegType1) <- generateLLVMExpr expr1
-  (exprReg2, exprRegType2) <- generateLLVMExpr expr2
-  resultReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IBinOp (EVReg resultReg) (EVReg exprReg1) (EVReg exprReg2) BAnd
-  return (resultReg, TVBool)
+generateLLVMExpr (EAnd _ expr1 expr2) = generateLazyAndOr expr1 expr2 BAnd
 
-generateLLVMExpr (EOr _ expr1 expr2) = do
-  (exprReg1, exprRegType1) <- generateLLVMExpr expr1
-  (exprReg2, exprRegType2) <- generateLLVMExpr expr2
-  resultReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IBinOp (EVReg resultReg) (EVReg exprReg1) (EVReg exprReg2) BOr
-  return (resultReg, TVBool)
+generateLLVMExpr (EOr _ expr1 expr2) = generateLazyAndOr expr1 expr2 BOr
 
 generateLLVMExpr (EApp _ ident exprs) = do
   identToFunSig <- gets identToFunSig
-  oldState <- get
-  oldGenInstrFromCurrBlock <- getBasicBlockGenLLVM (currBasicBlockLabel oldState)
-  oldRegNum <- gets nextFreeRegNum
+  -- oldState <- get
+  -- oldGenInstrFromCurrBlock <- getGenLLVM
+  -- oldRegNum <- gets nextFreeRegNum
+  -- oldLabelNum <- gets nextFreeLabelNum
+
+  oldVars <- gets identToRegisterAndType
 
   -- What to do:
   -- 1. Preserve the old state and generate expressions that will be args
@@ -210,26 +195,102 @@ generateLLVMExpr (EApp _ ident exprs) = do
   let funSig = identToFunSig Map.! ident
   regAndTypes <- mapM generateLLVMExpr exprs
 
-  newGenInstrFromCurrBlock <- getBasicBlockGenLLVM (currBasicBlockLabel oldState)
-  let generatedInstrs = newGenInstrFromCurrBlock L.\\ oldGenInstrFromCurrBlock
-  newRegNum <- gets nextFreeRegNum
+  -- newGenInstrFromCurrBlock <- getGenLLVM
+  -- let generatedInstrs = newGenInstrFromCurrBlock L.\\ oldGenInstrFromCurrBlock
+  -- newRegNum <- gets nextFreeRegNum
+  -- newLabelNum <- gets nextFreeLabelNum
 
   let (EVFun retType _ argTypeRegs block) = funSig
 
   -- call the function
-  put oldState
-  let howMuchToIncrement = newRegNum - oldRegNum
+  -- put oldState
+  modify $ \s -> s { identToRegisterAndType = oldVars }
+  -- let howMuchToIncrementReg = newRegNum - oldRegNum
+  -- let howMuchToIncrementLabel = newLabelNum - oldLabelNum
   -- increment register counter by the number of registers used in generating exprs
-  modify $ \s -> s { nextFreeRegNum = oldRegNum + howMuchToIncrement }
+  -- modify $ \s -> s { nextFreeRegNum = oldRegNum + howMuchToIncrementReg }
+  -- increment label counter by the number of labels used in generating exprs
+  -- liftIO $ putStrLn $ "howMuchToIncrementLabel: " ++ show howMuchToIncrementLabel
+  -- modify $ \s -> s { nextFreeLabelNum = oldLabelNum + howMuchToIncrementLabel }
+  -- modify $ \s -> s { currBasicBlockLabel = oldLabelNum + howMuchToIncrementLabel - 1 }
   regForFunRes <- if retType == TVVoid
                   then return (-1) -- dummy value for void return type
                   else getNextRegisterAndIncrement
-  mapM_ addGenLLVM generatedInstrs
+  -- mapM_ addGenLLVM generatedInstrs
   if retType == TVVoid
     then addGenLLVM $ IFunCallVoid ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
     else addGenLLVM $ IFunCall (EVReg regForFunRes) retType ident (map (\(reg, typ) -> (typ, EVReg reg)) regAndTypes)
   return (regForFunRes, retType)
+  
 
+generateLazyAndOr :: Expr -> Expr -> DBinOp -> CompilerM RegisterAndType
+generateLazyAndOr expr1 expr2 op = do
+  (reg1, typ1) <- generateLLVMExpr expr1
+
+  currLabel <- getCurrentBasicBlockLabel
+  liftIO $ putStrLn $ "Current label: " ++ show currLabel
+
+  -- Create a register for 'true' and 'false' constants (sometimes reused).
+  trueReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
+  falseReg <- getNextRegisterAndIncrement
+  addGenLLVM $ IAss (EVReg falseReg) (EVBool False)
+
+  -- We'll need three labels:
+  --   labelRight:   evaluate expr2
+  --   labelEnd:     merge results
+  labelRight <- getNextLabelAndIncrement
+  labelEnd   <- getNextLabelAndIncrement
+  -- For the final result
+  resultReg <- getNextRegisterAndIncrement
+
+   -- 1. Short-circuit branching
+  --    For AND: if expr1 == false => skip expr2, result = false
+  --    For OR:  if expr1 == true  => skip expr2, result = true
+  let jumpIf = case op of
+        BAnd -> (EVReg reg1, labelRight, labelEnd)  -- if reg1==true => labelRight else => labelEnd
+        BOr  -> (EVReg reg1, labelEnd,   labelRight) -- if reg1==true => labelEnd   else => labelRight
+
+  addGenLLVM $ IBr (fst3 jumpIf) (snd3 jumpIf) (thd3 jumpIf)
+
+  -- 2. labelRight: evaluate expr2
+  insertEmptyBasicBlock labelRight
+  setcurrBasicBlockLabel labelRight
+  addGenLLVM $ ILabel labelRight
+
+  (reg2, _) <- generateLLVMExpr expr2
+  labelRightEnd <- getCurrentBasicBlockLabel
+  addGenLLVM $ IBrJump labelEnd
+
+  -- 3. labelEnd: create phi node
+  insertEmptyBasicBlock labelEnd
+  setcurrBasicBlockLabel labelEnd
+  addGenLLVM $ ILabel labelEnd
+
+  -- In the phi:
+  -- For AND:
+  --   - coming from labelRight => the value is reg2
+  --   - coming from "short-circuit" => the value is false
+  --
+  -- For OR:
+  --   - coming from labelRight => the value is reg2
+  --   - coming from short-circuit => the value is true
+  --
+  let (shortCircuitLabel, shortCircuitVal) = case op of
+        BAnd -> (thd3 jumpIf, EVReg falseReg)
+        BOr  -> (thd3 jumpIf, EVReg trueReg)
+
+  addGenLLVM $ IPhi (EVReg resultReg) TVBool
+    (shortCircuitVal, currLabel) -- short-circuit path
+    (EVReg reg2, labelRightEnd)          -- normal path
+
+  -- Return the final register (Boolean)
+  return (resultReg, TVBool)
+
+  where
+    fst3 (x,_,_) = x
+    snd3 (_,y,_) = y
+    thd3 (_,_,z) = z
 
 
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
@@ -284,7 +345,6 @@ generateLLVMStmt (Ret _ expr) (inner, outer) = do
       addGenLLVM $ IFunRet (EVReg exprReg) exprRegType
       setRetValue (exprReg, exprRegType)
       return (inner, outer)
-
 
 generateLLVMStmt (VRet _) (inner, outer) = do
   shouldNotReturn <- getDoNotReturn
