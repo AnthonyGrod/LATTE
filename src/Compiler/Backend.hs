@@ -327,113 +327,107 @@ generateLLVMStmt (Cond _ expr stmt) (inner, outer) = generateLLVMStmt (CondElse 
 
 generateLLVMStmt (CondElse _ expr stmt1 stmt2) (inner, outer) = do
   (exprReg, _) <- generateLLVMExpr expr
-  currState <- get
-  doNotReturnOld <- getDoNotReturn
-  setDoNotReturn True
-
-  labelTrue <- getNextLabelAndIncrement
-  labelFalse <- getNextLabelAndIncrement
-  labelEnd  <- getNextLabelAndIncrement
-
-  -- Generate conditional jump and get current label and state
-  addGenLLVM $ IBr (EVReg exprReg) labelTrue labelFalse
-  currLabel <- getCurrentBasicBlockLabel
-  oldState <- get
-  let oldIdentToRegisterAndType = identToRegisterAndType oldState
-
-  -- generate code for true branch
-  insertEmptyBasicBlock labelTrue
-  setcurrBasicBlockLabel labelTrue
-  addGenLLVM $ ILabel labelTrue
-  (_, outer1) <- generateLLVMStmt stmt1 ([], Map.empty)
-  currentBl1 <- getCurrentBasicBlockLabel
-  addGenLLVM $ IBrJump labelEnd
-  mm1 <- gets identToRegisterAndType
-  modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
-  retInTrue <- checkIfReturnValueNotDummy
-  retValueInTrue <- getRetValue
-  setRetValueToDummy
-
-
-  -- generate code for false branch
-  insertEmptyBasicBlock labelFalse
-  setcurrBasicBlockLabel labelFalse
-  addGenLLVM $ ILabel labelFalse
-  (_, outer2) <- generateLLVMStmt stmt2 ([], Map.empty)
-  currentBl2 <- getCurrentBasicBlockLabel
-  addGenLLVM $ IBrJump labelEnd
-  mm2 <- gets identToRegisterAndType
-  modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
-  retInFalse <- checkIfReturnValueNotDummy
-  retValueInFalse <- getRetValue
-  setRetValueToDummy
-
-  insertEmptyBasicBlock labelEnd
-  setcurrBasicBlockLabel labelEnd
-  addGenLLVM $ ILabel labelEnd
-
-  -- generate phi statements for variables that were changed in both branches
-  let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection outer1 outer2
-  let phiNodesWithTypes = map (\ident -> (ident, (outer1 Map.! ident, outer2 Map.! ident))) phiNodes
-  phiRes <- forM phiNodesWithTypes $ \(ident, (reg1, reg2)) -> do
-    let (r1, t1) = reg1
-    let (r2, t2) = reg2
-    r1' <- getNextRegisterAndIncrement
-    addGenLLVM $ IPhi (EVReg r1') t1 (EVReg r1, currentBl1) (EVReg r2, currentBl2)
-    insertIdentRegisterAndType ident r1' t1
-    return (ident, (r1', t1))
-
-  -- generate phi statements for variables that were changed in one branch
-  let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference outer1 outer2
-  let phiNodesWithTypes1 = map (\ident -> (ident, outer1 Map.! ident)) phiNodes1
-  phiRes1 <- forM phiNodesWithTypes1 $ \(ident, (reg, t)) -> do
-    r' <- getNextRegisterAndIncrement
-    (oldRegister, _) <- lookupIdentRegisterAndType ident
-    addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl2) (EVReg reg, currentBl1)
-    insertIdentRegisterAndType ident r' t
-    return (ident, (r', t))
-
-  -- generate phi statements for variables that were changed in one branch
-  let phiNodes2 = LU.sortUniq $ Map.keys $ Map.difference outer2 outer1
-  let phiNodesWithTypes2 = map (\ident -> (ident, outer2 Map.! ident)) phiNodes2
-  phiRes2 <- forM phiNodesWithTypes2 $ \(ident, (reg, t)) -> do
-    r' <- getNextRegisterAndIncrement
-    (oldRegister, _) <- lookupIdentRegisterAndType ident
-    addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl1) (EVReg reg, currentBl2)
-    insertIdentRegisterAndType ident r' t
-    return (ident, (r', t))
-
-  setDoNotReturn doNotReturnOld
-
+  -- check if the expr is ELitTrue or ELitFalse
   -- check if if condition was literal true or false
   if isELitTrue expr
     then do
-      Control.Monad.when retInTrue $ do -- TODO: dummy initialize
-          let (reg, t) = retValueInTrue
-          retNewReg <- getNextRegisterAndIncrement
-          addGenLLVM $ IPhi (EVReg retNewReg) t (EVReg reg, currentBl1) (EVReg reg, currentBl2)
-          setRetValue (retNewReg, t)
-          -- addRetValueGenLLVM
+      (_, _) <- generateLLVMStmt stmt1 ([], Map.empty)
+      return (inner, outer)
     else do
-      Control.Monad.when (isELitFalse expr) $ do
-          Control.Monad.when retInFalse $ do
-            let (reg, t) = retValueInFalse
-            retNewReg <- getNextRegisterAndIncrement
-            addGenLLVM $ IPhi (EVReg retNewReg) t (EVReg reg, currentBl1) (EVReg reg, currentBl2)
-            setRetValue (retNewReg, t)
-            -- addRetValueGenLLVM
+      if isELitFalse expr
+        then do
+          (_, _) <- generateLLVMStmt stmt2 ([], Map.empty)
+          return (inner, outer)
+        else do
+          currState <- get
+          doNotReturnOld <- getDoNotReturn
+          setDoNotReturn True
 
-  -- add return if return occured in both branches
-  Control.Monad.when (retInTrue && retInFalse) $ do
-      setRetValueToDummy
-      retNewReg <- getNextRegisterAndIncrement
-      addGenLLVM $ IPhi (EVReg retNewReg) (snd retValueInTrue) (EVReg $ fst retValueInTrue, currentBl1) (EVReg $ fst retValueInFalse, currentBl2)
-      setRetValue (retNewReg, snd retValueInTrue)
-      unless doNotReturnOld $ do addRetValueGenLLVM
+          labelTrue <- getNextLabelAndIncrement
+          labelFalse <- getNextLabelAndIncrement
+          labelEnd  <- getNextLabelAndIncrement
 
-  -- accumplate outers
-  let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
-  return (inner, Map.union phiMap outer)
+          -- Generate conditional jump and get current label and state
+          addGenLLVM $ IBr (EVReg exprReg) labelTrue labelFalse
+          currLabel <- getCurrentBasicBlockLabel
+          oldState <- get
+          let oldIdentToRegisterAndType = identToRegisterAndType oldState
+
+          -- generate code for true branch
+          insertEmptyBasicBlock labelTrue
+          setcurrBasicBlockLabel labelTrue
+          addGenLLVM $ ILabel labelTrue
+          (_, outer1) <- generateLLVMStmt stmt1 ([], Map.empty)
+          currentBl1 <- getCurrentBasicBlockLabel
+          addGenLLVM $ IBrJump labelEnd
+          mm1 <- gets identToRegisterAndType
+          modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
+          retInTrue <- checkIfReturnValueNotDummy
+          retValueInTrue <- getRetValue
+          setRetValueToDummy
+
+
+          -- generate code for false branch
+          insertEmptyBasicBlock labelFalse
+          setcurrBasicBlockLabel labelFalse
+          addGenLLVM $ ILabel labelFalse
+          (_, outer2) <- generateLLVMStmt stmt2 ([], Map.empty)
+          currentBl2 <- getCurrentBasicBlockLabel
+          addGenLLVM $ IBrJump labelEnd
+          mm2 <- gets identToRegisterAndType
+          modify $ \s -> s { identToRegisterAndType = oldIdentToRegisterAndType }
+          retInFalse <- checkIfReturnValueNotDummy
+          retValueInFalse <- getRetValue
+          setRetValueToDummy
+
+          insertEmptyBasicBlock labelEnd
+          setcurrBasicBlockLabel labelEnd
+          addGenLLVM $ ILabel labelEnd
+
+          -- generate phi statements for variables that were changed in both branches
+          let phiNodes = LU.sortUniq $ Map.keys $ Map.intersection outer1 outer2
+          let phiNodesWithTypes = map (\ident -> (ident, (outer1 Map.! ident, outer2 Map.! ident))) phiNodes
+          phiRes <- forM phiNodesWithTypes $ \(ident, (reg1, reg2)) -> do
+            let (r1, t1) = reg1
+            let (r2, t2) = reg2
+            r1' <- getNextRegisterAndIncrement
+            addGenLLVM $ IPhi (EVReg r1') t1 (EVReg r1, currentBl1) (EVReg r2, currentBl2)
+            insertIdentRegisterAndType ident r1' t1
+            return (ident, (r1', t1))
+
+          -- generate phi statements for variables that were changed in one branch
+          let phiNodes1 = LU.sortUniq $ Map.keys $ Map.difference outer1 outer2
+          let phiNodesWithTypes1 = map (\ident -> (ident, outer1 Map.! ident)) phiNodes1
+          phiRes1 <- forM phiNodesWithTypes1 $ \(ident, (reg, t)) -> do
+            r' <- getNextRegisterAndIncrement
+            (oldRegister, _) <- lookupIdentRegisterAndType ident
+            addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl2) (EVReg reg, currentBl1)
+            insertIdentRegisterAndType ident r' t
+            return (ident, (r', t))
+
+          -- generate phi statements for variables that were changed in one branch
+          let phiNodes2 = LU.sortUniq $ Map.keys $ Map.difference outer2 outer1
+          let phiNodesWithTypes2 = map (\ident -> (ident, outer2 Map.! ident)) phiNodes2
+          phiRes2 <- forM phiNodesWithTypes2 $ \(ident, (reg, t)) -> do
+            r' <- getNextRegisterAndIncrement
+            (oldRegister, _) <- lookupIdentRegisterAndType ident
+            addGenLLVM $ IPhi (EVReg r') t (EVReg oldRegister, currentBl1) (EVReg reg, currentBl2)
+            insertIdentRegisterAndType ident r' t
+            return (ident, (r', t))
+
+          setDoNotReturn doNotReturnOld
+
+          -- add return if return occured in both branches
+          Control.Monad.when (retInTrue && retInFalse) $ do
+              setRetValueToDummy
+              retNewReg <- getNextRegisterAndIncrement
+              addGenLLVM $ IPhi (EVReg retNewReg) (snd retValueInTrue) (EVReg $ fst retValueInTrue, currentBl1) (EVReg $ fst retValueInFalse, currentBl2)
+              setRetValue (retNewReg, snd retValueInTrue)
+              unless doNotReturnOld $ do addRetValueGenLLVM
+
+          -- accumplate outers
+          let phiMap = Map.fromList $ phiRes ++ phiRes1 ++ phiRes2
+          return (inner, Map.union phiMap outer)
 
 -- TODO: Return flag does not work in while
 generateLLVMStmt (While _ expr stmt) (inner, outer) = do
