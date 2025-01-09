@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
 
-module Compiler.Backend where
+module Compiler.Compiler where
 
 import Data.Map (Map)
 import qualified Data.Map as Map

@@ -25,10 +25,10 @@ executable COMP
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    RunCompiler, Frontend.Frontend, Compiler.Backend, State, Aux, Parser.Abs, Parser.ErrM, Parser.Par, Parser.Lex
+    other-modules:    RunCompiler, Frontend.Frontend, Compiler.Compiler, State, Aux, Parser.Abs, Parser.ErrM, Parser.Par, Parser.Lex
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base ^>=4.17.2.0, mtl, containers, array, Unique == 0.4.7.9, process
+    build-depends:    base ^>=4.17.2.0, mtl, containers, array, process
     hs-source-dirs:   src, lib
     default-language: Haskell2010

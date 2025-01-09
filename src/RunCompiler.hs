@@ -4,7 +4,7 @@ import Prelude
 import Frontend.Frontend
 import Parser.Par
 import Parser.Abs
-import Compiler.Backend
+import Compiler.Compiler
 
 
 compileWithArgs :: String -> IO ()
