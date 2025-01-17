@@ -18,10 +18,10 @@ data CompileState = CompileState
   , nextFreeRegNum   :: Register
   , basicBlocks      :: Map Label BasicBlock
   , currBasicBlockLabel :: Label
-  , identToRegisterAndType :: Map Ident RegisterAndType
+  , identToValueAndType :: Map Ident ValueAndType
   , identToFunSig    :: Map Ident LLVMValue
   , allInstructions  :: [Instr]
-  , returnValue      :: RegisterAndType
+  , returnValue      :: ValueAndType
   , doNotReturn      :: Bool
   , globalStringMap  :: Map StringNum String
   , nextFreeStringNum :: StringNum
@@ -33,17 +33,17 @@ initialState = CompileState
   , nextFreeRegNum = 1
   , basicBlocks = Map.empty
   , currBasicBlockLabel = -1
-  , identToRegisterAndType = Map.empty
+  , identToValueAndType = Map.empty
   , identToFunSig = Map.empty
   , allInstructions = []
-  , returnValue = dummyReturnRegisterAndType
+  , returnValue = dummyReturnValueAndType
   , doNotReturn = False
   , globalStringMap = Map.fromList [(1, "")] -- for empty string
   , nextFreeStringNum = 2
   }
 
-setIdentToRegisterAndTypeToEmpty :: CompileState -> CompileState
-setIdentToRegisterAndTypeToEmpty state = state { identToRegisterAndType = Map.empty }
+setIdentToValueAndTypeToEmpty :: CompileState -> CompileState
+setIdentToValueAndTypeToEmpty state = state { identToValueAndType = Map.empty }
 
 type CompilerM a = StateT CompileState IO a
 
@@ -61,15 +61,15 @@ emptyBasicBlock label = BasicBlock
 checkIfReturnValueNotDummy :: CompilerM Bool
 checkIfReturnValueNotDummy = do
   state <- get
-  return $ returnValue state /= dummyReturnRegisterAndType
+  return $ returnValue state /= dummyReturnValueAndType
 
 setRetValueToDummy :: CompilerM ()
-setRetValueToDummy = modify $ \st -> st { returnValue = dummyReturnRegisterAndType }
+setRetValueToDummy = modify $ \st -> st { returnValue = dummyReturnValueAndType }
 
-setRetValue :: RegisterAndType -> CompilerM ()
+setRetValue :: ValueAndType -> CompilerM ()
 setRetValue regAndType = modify $ \st -> st { returnValue = regAndType }
 
-getRetValue :: CompilerM RegisterAndType
+getRetValue :: CompilerM ValueAndType
 getRetValue = gets returnValue
 
 setDoNotReturn :: Bool -> CompilerM ()
@@ -106,15 +106,15 @@ getNextRegisterAndIncrement = do
 getCurrentBasicBlockLabel :: CompilerM Label
 getCurrentBasicBlockLabel = gets currBasicBlockLabel
 
-insertIdentRegisterAndType :: Ident -> Register -> LLVMType -> CompilerM ()
-insertIdentRegisterAndType ident reg typ = do
+insertIdentValueAndType :: Ident -> LLVMValue -> LLVMType -> CompilerM ()
+insertIdentValueAndType ident reg typ = do
   modify $ \st -> st
-    { identToRegisterAndType = Map.insert ident (reg, typ) (identToRegisterAndType st) }
+    { identToValueAndType = Map.insert ident (reg, typ) (identToValueAndType st) }
 
-lookupIdentRegisterAndType :: Ident -> CompilerM RegisterAndType
-lookupIdentRegisterAndType ident = do
+lookupIdentValueAndType :: Ident -> CompilerM ValueAndType
+lookupIdentValueAndType ident = do
   state <- get
-  case Map.lookup ident (identToRegisterAndType state) of
+  case Map.lookup ident (identToValueAndType state) of
     Just regAndType -> return regAndType
     Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
 

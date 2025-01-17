@@ -9,7 +9,7 @@ import Parser.Abs
 type Label = Int
 type Register = Int
 type StringNum = Int
-type RegisterAndType = (Register, LLVMType)
+type ValueAndType = (LLVMValue, LLVMType)
 
 showRegister :: Register -> String
 showRegister = ("%" ++) . show
@@ -17,8 +17,8 @@ showRegister = ("%" ++) . show
 showLabel :: Label -> String
 showLabel = ("Label" ++) . show
 
-dummyReturnRegisterAndType :: (Register, LLVMType)
-dummyReturnRegisterAndType = (-1, TVVoid)
+dummyReturnValueAndType :: (LLVMValue, LLVMType)
+dummyReturnValueAndType = (EVVoid, TVVoid)
 
 data LLVMValue =
   EVInt Int |
@@ -45,6 +45,9 @@ bnfcTypeToLLVMType (Str _) = TVString
 bnfcTypeToLLVMType (Bool _) = TVBool
 bnfcTypeToLLVMType (Void _) = TVVoid
 bnfcTypeToLLVMType (Fun _ retType _) = bnfcTypeToLLVMType retType
+
+extractRegisterValue :: LLVMValue -> Int
+extractRegisterValue (EVReg i) = i
 
 instance Show LLVMType where
   show TVInt = "i32"
