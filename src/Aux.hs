@@ -58,8 +58,8 @@ instance Show LLVMType where
   show TVReg = "register"
 
 instance Show LLVMValue where
-  show (EVInt i) = "add i32 0, " ++ show i
-  show (EVBool b) = if b then "or i1 true, true" else "or i1 false, false"
+  show (EVInt i) = show i
+  show (EVBool b) = if b then "true" else "false"
   show (EVString s strNum) = "getelementptr " ++ 
                       "[" ++ show (length s + 1) ++ " x i8], "
                       ++ "[" ++ show (length s + 1) ++ " x i8]* @." ++ show strNum ++ ", i32 0, i32 0"

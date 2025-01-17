@@ -94,19 +94,13 @@ generateLLVMExpr (EVar _ ident) = do
     Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
 
 generateLLVMExpr (ELitInt _ i) = do
-  reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVInt $ fromIntegral i)
-  return (EVReg reg, TVInt)
+  return (EVInt $ fromIntegral i, TVInt)
 
 generateLLVMExpr (ELitTrue _) = do
-  reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool True)
-  return (EVReg reg, TVBool)
+  return (EVBool True, TVBool)
 
 generateLLVMExpr (ELitFalse _) = do
-  reg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg reg) (EVBool False)
-  return (EVReg reg, TVBool)
+  return (EVBool False, TVBool)
 
 generateLLVMExpr (EString _ s) = do
   newStringNum <- getNextStringNumAndIncrement
