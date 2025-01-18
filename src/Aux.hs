@@ -149,6 +149,10 @@ instance Show Instr where
   show (IAss reg val) =
     case val of
       EVVoid -> ""
+      EVInt i -> show reg ++ " = " ++ "add i32 0, " ++ show i
+      EVBool b -> show reg ++ " = " ++ "add i1 0, " ++ case b of
+        True -> "1"
+        False -> "0"
       _ -> show reg ++ " = " ++ show val
   show (IBinOp dest op1 op2 binOp) =
     case binOp of

@@ -110,21 +110,23 @@ generateLLVMExpr (EString _ s) = do
   return (EVReg newStringReg, TVString)
 
 generateLLVMExpr (Neg _ expr) = do
-  (exprReg, exprRegType) <- generateLLVMExpr expr
-  -- generate negative by subtracting from 0
-  zeroReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg zeroReg) (EVInt 0)
-  resReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IBinOp (EVReg resReg) (EVReg zeroReg) exprReg BSub
-  return (EVReg resReg, exprRegType)
+  (exprValue, exprRegType) <- generateLLVMExpr expr
+  case exprValue of
+    EVInt i -> return (EVInt (-i), TVInt)
+    _ -> do
+      resultReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IBinOp (EVReg resultReg) (EVInt 0) exprValue BSub
+      return (EVReg resultReg, TVInt)
 
 generateLLVMExpr (Not _ expr) = do
-  (exprReg, exprRegType) <- generateLLVMExpr expr
-  trueReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
-  resReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IRelOp (EVReg resReg) exprRegType exprReg (EVReg trueReg) RE
-  return (EVReg resReg, TVBool)
+  (exprValue, exprRegType) <- generateLLVMExpr expr
+  case exprValue of
+    EVBool b -> return (EVBool (not b), TVBool)
+    _ -> do
+      resultReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IRelOp (EVReg resultReg) exprRegType exprValue (EVBool True) RE
+      return (EVReg resultReg, TVBool)
+
 
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1
