@@ -264,10 +264,13 @@ generateLazyAndOr expr1 expr2 op = do
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
     (identReg, identRegType) <- lookupIdentValueAndType ident
-    oneConstReg <- getNextRegisterAndIncrement
-    addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
+    -- oneConstReg <- getNextRegisterAndIncrement
+    -- addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
     resultReg <- getNextRegisterAndIncrement
-    addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVReg oneConstReg) op
+    -- addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVReg oneConstReg) op
+    case op of
+      BAdd -> addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVInt 1) BAdd
+      BSub -> addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVInt 1) BSub
     insertIdentValueAndType ident (EVReg resultReg) identRegType
     return (resultReg, identRegType)
 
