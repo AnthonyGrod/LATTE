@@ -9,7 +9,7 @@ import State
 import Parser.Abs
 import Data.Map (Map)
 import qualified Data.Map as Map
-
+import Debug.Trace (trace)
 
 optimizeBlockLCSE :: BasicBlock -> BasicBlock
 optimizeBlockLCSE block = block { bbInstructions = optimizeInstructionsLCSE (bbInstructions block) [] }
@@ -19,8 +19,12 @@ optimizeBlockLCSE block = block { bbInstructions = optimizeInstructionsLCSE (bbI
 optimizeInstructionsLCSE :: [Instr] -> [Instr] -> [Instr]
 optimizeInstructionsLCSE [] acc = acc
 optimizeInstructionsLCSE (instr:instrs) acc = do
-  let instrsAfterStep = optimizeLCSEStep instr instrs [] -- should return all instructions after instr with potentially removed and replaced stuff
-  optimizeInstructionsLCSE instrsAfterStep (acc ++ [instr])
+  if isAssignableOp instr
+    then do
+      let instrsAfterStep = optimizeLCSEStep instr instrs [] -- should return all instructions after instr with potentially removed and replaced stuff
+      optimizeInstructionsLCSE instrsAfterStep (acc ++ [instr])
+    else do
+      optimizeInstructionsLCSE instrs (acc ++ [instr])
 
 -- reg - register that will be put in the replaced places
 -- reg_x - register that will be replaced
@@ -34,30 +38,33 @@ replaceAllRegisters reg reg_x = map (replaceRegInInstrRHS reg reg_x)
 optimizeLCSEStep :: Instr -> [Instr] -> [Instr] -> [Instr]
 optimizeLCSEStep focus [] acc = acc
 optimizeLCSEStep focus (head:rest) acc =
+  trace ("focus: " ++ show focus ++ " head: " ++ show head) $
   if areInstrsTheSameType focus head
-    then case focus of
+    then 
+      trace ("focus: " ++ show focus ++ " head: " ++ show head) $
+      case focus of
       IAss lhs rhs ->
         let headRHS = getAssRHS head
             headLHS = getLHSReg head
         in if headRHS == rhs
              then
                let instrsAfterReplace = replaceAllRegisters lhs headLHS rest
-               in optimizeInstructionsLCSE instrsAfterReplace acc
-             else optimizeInstructionsLCSE rest (acc ++ [head])
+               in optimizeLCSEStep focus instrsAfterReplace acc
+             else optimizeLCSEStep focus rest (acc ++ [head])
       IBinOp lhs rhs1 rhs2 op ->
         let headRHS = getBinOpRHS head
             headLHS = getLHSReg head
         in if headRHS == [rhs1, rhs2]
              then
                let instrsAfterReplace = replaceAllRegisters lhs headLHS rest
-               in optimizeInstructionsLCSE instrsAfterReplace acc
-             else optimizeInstructionsLCSE rest (acc ++ [head])
+               in optimizeLCSEStep focus instrsAfterReplace acc
+             else optimizeLCSEStep focus rest (acc ++ [head])
       IRelOp lhs typ rhs1 rhs2 op ->
         let headRHS = getRelOpRHS head
             headLHS = getLHSReg head
         in if headRHS == [rhs1, rhs2]
              then
                let instrsAfterReplace = replaceAllRegisters lhs headLHS rest
-               in optimizeInstructionsLCSE instrsAfterReplace acc
-             else optimizeInstructionsLCSE rest (acc ++ [head])
-    else optimizeInstructionsLCSE (head:rest) acc
+               in optimizeLCSEStep focus instrsAfterReplace acc
+             else optimizeLCSEStep focus rest (acc ++ [head])
+    else optimizeLCSEStep focus rest (acc ++ [head])

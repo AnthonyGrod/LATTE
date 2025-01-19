@@ -44,7 +44,7 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
   let allInstrs = concatMap bbInstructions (Map.elems allBlocks)
   let allBlocksOptimized = Map.map optimizeBlockLCSE allBlocks
   blocksOrder <- getBlocksOrder
-  let allInstrs = concatMap (\label -> bbInstructions (allBlocks Map.! label)) blocksOrder
+  let allInstrs = concatMap (\label -> bbInstructions (allBlocksOptimized Map.! label)) blocksOrder
   genLLVM <- getAllBasicBlocksGenLLVM
   -- get all strings and put them on the top
   globalStrings <- gets globalStringMap

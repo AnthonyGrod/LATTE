@@ -108,8 +108,8 @@ getLHSReg (IRelOp dest _ _ _ _) = dest
 getLHSReg (IAss dest _) = dest
 
 areInstrsTheSameType :: Instr -> Instr -> Bool
-areInstrsTheSameType (IBinOp {}) (IBinOp {}) = True
-areInstrsTheSameType (IRelOp {}) (IRelOp {}) = True
+areInstrsTheSameType (IBinOp _ _ _ op1) (IBinOp _ _ _ op2) = op1 == op2
+areInstrsTheSameType (IRelOp _ _ _ _ op1) (IRelOp _ _ _ _ op2) = op1 == op2
 areInstrsTheSameType (IAss _ _) (IAss _ _) = True
 areInstrsTheSameType _ _ = False
 
@@ -124,6 +124,12 @@ replaceRegInInstrRHS lhs lhs_x instr = case instr of
   IFunCall reg retType ident args -> IFunCall (if reg == lhs_x then lhs else reg) retType ident (map (\(argType, argVal) -> (argType, if argVal == lhs_x then lhs else argVal)) args)
   IFunCallVoid ident args -> IFunCallVoid ident (map (\(argType, argVal) -> (argType, if argVal == lhs_x then lhs else argVal)) args)
   instr -> instr
+
+isAssignableOp :: Instr -> Bool
+isAssignableOp (IAss _ _) = True
+isAssignableOp (IBinOp dest _ _ _) = True
+isAssignableOp (IRelOp dest _ _ _ _) = True
+isAssignableOp _ = False
 
 instance Show DBinOp where
   show BAdd = "add"
