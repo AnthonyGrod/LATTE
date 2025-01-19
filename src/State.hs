@@ -25,6 +25,7 @@ data CompileState = CompileState
   , doNotReturn      :: Bool
   , globalStringMap  :: Map StringNum String
   , nextFreeStringNum :: StringNum
+  , blocksOrder      :: [Label]
   }
 
 initialState :: CompileState
@@ -32,7 +33,7 @@ initialState = CompileState
   { nextFreeLabelNum = 0
   , nextFreeRegNum = 1
   , basicBlocks = Map.empty
-  , currBasicBlockLabel = -1
+  , currBasicBlockLabel = 0
   , identToValueAndType = Map.empty
   , identToFunSig = Map.empty
   , allInstructions = []
@@ -40,6 +41,7 @@ initialState = CompileState
   , doNotReturn = False
   , globalStringMap = Map.fromList [(1, "")] -- for empty string
   , nextFreeStringNum = 2
+  , blocksOrder = []
   }
 
 setIdentToValueAndTypeToEmpty :: CompileState -> CompileState
@@ -50,13 +52,26 @@ type CompilerM a = StateT CompileState IO a
 data BasicBlock = BasicBlock
   { bbLabel        :: Label
   , bbInstructions :: [Instr]
+  , strCats        :: [StringNum]
   }
 
 emptyBasicBlock :: Label -> BasicBlock
 emptyBasicBlock label = BasicBlock
   { bbLabel = label
   , bbInstructions = []
+  , strCats = []
   }
+
+insertStrCat :: StringNum -> CompilerM ()
+insertStrCat strNum = do
+  state <- get
+  let currLabel = currBasicBlockLabel state
+  let bbMap     = basicBlocks state
+  let currBB    = bbMap Map.! currLabel
+  let newBB     = currBB { strCats = strCats currBB ++ [strNum] }
+  put state
+    { basicBlocks = Map.insert currLabel newBB bbMap
+    }
 
 checkIfReturnValueNotDummy :: CompilerM Bool
 checkIfReturnValueNotDummy = do
@@ -95,6 +110,13 @@ getNextStringNumAndIncrement = do
 insertStringToGlobalStringMap :: StringNum -> String -> CompilerM ()
 insertStringToGlobalStringMap num str = modify $ \st ->
   st { globalStringMap = Map.insert num str (globalStringMap st) }
+
+getStringFromGlobalStringMap :: StringNum -> CompilerM String
+getStringFromGlobalStringMap num = do
+  state <- get
+  case Map.lookup num (globalStringMap state) of
+    Just str -> return str
+    Nothing -> error $ "String with number " ++ show num ++ " not found"
 
 getNextRegisterAndIncrement :: CompilerM Register
 getNextRegisterAndIncrement = do
@@ -138,7 +160,12 @@ getGenLLVM :: CompilerM [Instr]
 getGenLLVM = gets allInstructions
 
 setcurrBasicBlockLabel :: Label -> CompilerM ()
-setcurrBasicBlockLabel label = modify $ \st -> st { currBasicBlockLabel = label }
+setcurrBasicBlockLabel label = modify $ \st -> st { 
+  currBasicBlockLabel = label, blocksOrder = blocksOrder st ++ [label]
+  }
+
+getBlocksOrder :: CompilerM [Label]
+getBlocksOrder = gets blocksOrder
 
 getBasicBlock :: Label -> CompilerM BasicBlock
 getBasicBlock label = do
@@ -149,6 +176,13 @@ getBasicBlockGenLLVM :: Label -> CompilerM [Instr]
 getBasicBlockGenLLVM label = do
   bb <- getBasicBlock label
   return $ bbInstructions bb
+
+getAllBasicBlocksGenLLVM :: CompilerM [Instr]
+getAllBasicBlocksGenLLVM = do
+  gets (concatMap bbInstructions . Map.elems . basicBlocks)
+
+getAllBasicBlocks :: CompilerM (Map Label BasicBlock)
+getAllBasicBlocks = gets basicBlocks
 
 insertBasicBlock :: BasicBlock -> CompilerM ()
 insertBasicBlock bb = do

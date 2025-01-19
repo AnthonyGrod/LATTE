@@ -10,6 +10,7 @@ import Data.List (nub, sort)
 
 import Parser.Abs
 import Aux
+import LCSE.LCSE
 import State
 import qualified Control.Monad
 import Control.Monad.State
@@ -34,11 +35,21 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
   insertIdentFunSigs $ zip builtInFunctionIdents funValsFiltered
 
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
-  genLLVM <- getGenLLVM
+  -- print all basic blocks labels
+  state <- get
+  liftIO $ print $ Map.keys (basicBlocks state)
+  -- for each block in state, transform it via optimizeBlockLCSE
+  -- and then print all instructions
+  let allBlocks = basicBlocks state
+  let allInstrs = concatMap bbInstructions (Map.elems allBlocks)
+  let allBlocksOptimized = Map.map optimizeBlockLCSE allBlocks
+  blocksOrder <- getBlocksOrder
+  let allInstrs = concatMap (\label -> bbInstructions (allBlocks Map.! label)) blocksOrder
+  genLLVM <- getAllBasicBlocksGenLLVM
   -- get all strings and put them on the top
   globalStrings <- gets globalStringMap
   let globalStringsLLVM = map (\(num, str) -> IStringGlobal (Ident $ show num) str) $ Map.toList globalStrings
-  let genLLVMWithStrings = globalStringsLLVM ++ genLLVM
+  let genLLVMWithStrings = globalStringsLLVM ++ builtInFunctionsFiltered ++ allInstrs
   let outputFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".ll"
   let outputBCFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".bc"
   liftIO $ do
@@ -62,8 +73,8 @@ generateLLVMTopDef (FnDef _ retType ident args block) = do
   let funValue = EVFun (bnfcTypeToLLVMType retType) ident argTypeRegPairs block
   modify $ \s -> s { identToFunSig = Map.insert ident funValue (identToFunSig s) }
   label <- getNextLabelAndIncrement -- get new label for function
-  modify $ \s -> s { currBasicBlockLabel = label }
   insertEmptyBasicBlock label
+  setcurrBasicBlockLabel label
   addGenLLVM $ IFunPr (bnfcTypeToLLVMType retType) ident argTypeRegPairs
   addGenLLVM $ ILabel label
   _ <- generateLLVMBlock block
@@ -103,11 +114,18 @@ generateLLVMExpr (ELitFalse _) = do
   return (EVBool False, TVBool)
 
 generateLLVMExpr (EString _ s) = do
-  newStringNum <- getNextStringNumAndIncrement
-  insertStringToGlobalStringMap newStringNum s -- will be put on the top
-  newStringReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg newStringReg) (EVString s newStringNum)
-  return (EVReg newStringReg, TVString)
+  globalStrings <- gets globalStringMap
+  case Map.lookup s (Map.fromList $ map (\(num, str) -> (str, num)) $ Map.toList globalStrings) of
+    Just existingStringNum -> do
+      existingStringReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IAss (EVReg existingStringReg) (EVString s existingStringNum)
+      return (EVReg existingStringReg, TVString)
+    Nothing -> do
+      newStringNum <- getNextStringNumAndIncrement
+      insertStringToGlobalStringMap newStringNum s -- will be put on the top
+      newStringReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IAss (EVReg newStringReg) (EVString s newStringNum)
+      return (EVReg newStringReg, TVString)
 
 generateLLVMExpr (Neg _ expr) = do
   (exprValue, exprRegType) <- generateLLVMExpr expr

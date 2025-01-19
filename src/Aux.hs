@@ -60,7 +60,7 @@ instance Show LLVMType where
 instance Show LLVMValue where
   show (EVInt i) = show i
   show (EVBool b) = if b then "true" else "false"
-  show (EVString s strNum) = "getelementptr " ++ 
+  show (EVString s strNum) = "getelementptr " ++
                       "[" ++ show (length s + 1) ++ " x i8], "
                       ++ "[" ++ show (length s + 1) ++ " x i8]* @." ++ show strNum ++ ", i32 0, i32 0"
   show EVVoid = "void"
@@ -79,10 +79,10 @@ data DBinOp = BAdd | BSub | BMul | BDiv | BMod | BAnd | BOr deriving (Eq)
 data DRelOp = RLTH | RLE | RGTH | RGE | RQU | RE deriving (Eq)
 
 data Instr =
-  IFunPr LLVMType Ident [(LLVMType, LLVMValue)] | 
+  IFunPr LLVMType Ident [(LLVMType, LLVMValue)] |
   IAss   LLVMValue LLVMValue |
-  IBinOp LLVMValue LLVMValue LLVMValue DBinOp | 
-  IRelOp LLVMValue LLVMType LLVMValue LLVMValue DRelOp | 
+  IBinOp LLVMValue LLVMValue LLVMValue DBinOp |
+  IRelOp LLVMValue LLVMType LLVMValue LLVMValue DRelOp |
   IFunEp  |
   IFunRet LLVMValue LLVMType |
   IBr LLVMValue Label Label |
@@ -92,8 +92,38 @@ data Instr =
   IFunCall LLVMValue LLVMType Ident [(LLVMType, LLVMValue)] |
   IFunCallVoid Ident [(LLVMType, LLVMValue)] |
   IFunDecl LLVMType Ident [LLVMType] |
-  IStringGlobal Ident String 
+  IStringGlobal Ident String
   deriving (Eq)
+
+getBinOpRHS :: Instr -> [LLVMValue]
+getBinOpRHS (IBinOp dest op1 op2 binOp) = [op1, op2]
+getRelOpRHS :: Instr -> [LLVMValue]
+getRelOpRHS (IRelOp dest destType op1 op2 relOp) = [op1, op2]
+getAssRHS :: Instr -> LLVMValue
+getAssRHS (IAss _ val) = val
+
+getLHSReg :: Instr -> LLVMValue
+getLHSReg (IBinOp dest _ _ _) = dest
+getLHSReg (IRelOp dest _ _ _ _) = dest
+getLHSReg (IAss dest _) = dest
+
+areInstrsTheSameType :: Instr -> Instr -> Bool
+areInstrsTheSameType (IBinOp {}) (IBinOp {}) = True
+areInstrsTheSameType (IRelOp {}) (IRelOp {}) = True
+areInstrsTheSameType (IAss _ _) (IAss _ _) = True
+areInstrsTheSameType _ _ = False
+
+replaceRegInInstrRHS :: LLVMValue -> LLVMValue -> Instr -> Instr
+replaceRegInInstrRHS lhs lhs_x instr = case instr of
+  IAss lhs' rhs -> IAss (if lhs' == lhs_x then lhs else lhs') rhs
+  IBinOp dest op1 op2 binOp -> IBinOp dest (if op1 == lhs_x then lhs else op1) (if op2 == lhs_x then lhs else op2) binOp
+  IRelOp dest destType op1 op2 relOp -> IRelOp dest destType (if op1 == lhs_x then lhs else op1) (if op2 == lhs_x then lhs else op2) relOp
+  IFunRet val retType -> IFunRet (if val == lhs_x then lhs else val) retType
+  IBr cond trueLabel falseLabel -> IBr (if cond == lhs_x then lhs else cond) trueLabel falseLabel
+  IPhi lhsReg typ (val1, label1) (val2, label2) -> IPhi lhsReg typ (if val1 == lhs_x then lhs else val1, label1) (if val2 == lhs_x then lhs else val2, label2)
+  IFunCall reg retType ident args -> IFunCall (if reg == lhs_x then lhs else reg) retType ident (map (\(argType, argVal) -> (argType, if argVal == lhs_x then lhs else argVal)) args)
+  IFunCallVoid ident args -> IFunCallVoid ident (map (\(argType, argVal) -> (argType, if argVal == lhs_x then lhs else argVal)) args)
+  instr -> instr
 
 instance Show DBinOp where
   show BAdd = "add"
@@ -130,11 +160,10 @@ builtInFunctions =
   , IFunDecl TVVoid (Ident "printInt") [TVInt]
   , IFunDecl TVInt (Ident "readInt") []
   , IFunDecl TVString (Ident "readString") []
-  , IFunDecl TVVoid (Ident "error") []
-  , IFunDecl TVInt (Ident "_strlen") [TVString]
   , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
   , IFunDecl TVBool (Ident "_strcmp") [TVString, TVString]
-  , IFunDecl TVString (Ident "_strcpy") [TVString, TVString]
+  , IFunDecl TVVoid (Ident "increaseRefCount") [TVString]
+  , IFunDecl TVVoid (Ident "decreaseRefCount") [TVString]
   ]
 
 instance Show Instr where
@@ -150,9 +179,7 @@ instance Show Instr where
     case val of
       EVVoid -> ""
       EVInt i -> show reg ++ " = " ++ "add i32 0, " ++ show i
-      EVBool b -> show reg ++ " = " ++ "add i1 0, " ++ case b of
-        True -> "1"
-        False -> "0"
+      EVBool b -> show reg ++ " = " ++ "add i1 0, " ++ (if b then "1" else "0")
       _ -> show reg ++ " = " ++ show val
   show (IBinOp dest op1 op2 binOp) =
     case binOp of
