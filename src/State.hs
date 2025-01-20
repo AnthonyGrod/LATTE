@@ -191,3 +191,15 @@ insertBasicBlock bb = do
 
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
+
+removeLastInstrFromBasicBlockAndState :: CompilerM ()
+removeLastInstrFromBasicBlockAndState = do
+  state <- get
+  let currLabel = currBasicBlockLabel state
+  let bbMap     = basicBlocks state
+  let currBB    = bbMap Map.! currLabel
+  let newBB     = currBB { bbInstructions = init $ bbInstructions currBB }
+  put state
+    { basicBlocks = Map.insert currLabel newBB bbMap
+    , allInstructions = init $ allInstructions state
+    }

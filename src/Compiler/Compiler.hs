@@ -99,9 +99,8 @@ generateLLVMBlock (Block _ stmts) = go stmts ([], Map.empty)
 
 generateLLVMExpr :: Expr -> CompilerM ValueAndType
 generateLLVMExpr (EVar _ ident) = do
-  identToLLVMValType <- gets identToValueAndType
-  liftIO $ print $ Map.lookup ident identToLLVMValType
-  case Map.lookup ident identToLLVMValType of
+  identToReg <- gets identToValueAndType
+  case Map.lookup ident identToReg of
     Just (reg, typ) -> return (reg, typ)
     Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
 
@@ -307,7 +306,7 @@ generateLLVMStmt (Decl _ itemsType items) (currDecl, prevDeclAndChanged) = do
         insertIdentValueAndType ident (EVReg reg) llvmItemsType
         return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
       Init _ ident expr -> do
-        identToLLVMValType <- gets identToValueAndType
+        identToReg <- gets identToValueAndType
         (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (currDeclAcc, prevDeclAndChangedAcc)
         return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
     )
