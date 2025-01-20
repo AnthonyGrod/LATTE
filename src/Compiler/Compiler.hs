@@ -99,8 +99,9 @@ generateLLVMBlock (Block _ stmts) = go stmts ([], Map.empty)
 
 generateLLVMExpr :: Expr -> CompilerM ValueAndType
 generateLLVMExpr (EVar _ ident) = do
-  identToReg <- gets identToValueAndType
-  case Map.lookup ident identToReg of
+  identToLLVMValType <- gets identToValueAndType
+  liftIO $ print $ Map.lookup ident identToLLVMValType
+  case Map.lookup ident identToLLVMValType of
     Just (reg, typ) -> return (reg, typ)
     Nothing -> error $ "Variable " ++ extractIdent ident ++ " not found"
 
@@ -147,30 +148,51 @@ generateLLVMExpr (Not _ expr) = do
 
 
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
-  (exprReg1, exprRegType1) <- generateLLVMExpr expr1
-  (exprReg2, exprRegType2) <- generateLLVMExpr expr2
-  resultReg <- getNextRegisterAndIncrement
+  (val1, t1) <- generateLLVMExpr expr1
+  (val2, t2) <- generateLLVMExpr expr2
   let binOp = case mulOp of
         Times _ -> BMul
-        Div _ -> BDiv
-        Mod _ -> BMod
-  addGenLLVM $ IBinOp (EVReg resultReg) exprReg1 exprReg2 binOp
-  return (EVReg resultReg, exprRegType1)
+        Div _   -> BDiv
+        Mod _   -> BMod
+  case (val1, val2) of
+    (EVInt i1, EVInt i2) -> do
+      resultReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IAss (EVReg resultReg) (EVInt (case binOp of
+        BMul -> i1 * i2
+        BDiv -> i1 `div` i2
+        BMod -> i1 `rem` i2))
+      return (EVReg resultReg, TVInt)
+    _ -> do
+      resultReg <- getNextRegisterAndIncrement
+      addGenLLVM $ IBinOp (EVReg resultReg) val1 val2 binOp
+      return (EVReg resultReg, t1)
 
 generateLLVMExpr (EAdd _ expr1 addOp expr2) = do
-  (exprReg1, exprRegType1) <- generateLLVMExpr expr1
-  (exprReg2, exprRegType2) <- generateLLVMExpr expr2
-  resultReg <- getNextRegisterAndIncrement
+  (val1, t1) <- generateLLVMExpr expr1
+  (val2, t2) <- generateLLVMExpr expr2
   let binOp = case addOp of
-        Plus _ -> BAdd
+        Plus _  -> BAdd
         Minus _ -> BSub
-  case exprRegType1 of
-    TVInt -> do
-      addGenLLVM $ IBinOp (EVReg resultReg) exprReg1 exprReg2 binOp
-      return (EVReg resultReg, exprRegType1)
+  case t1 of
+    TVInt ->
+      case (val1, val2) of
+        (EVInt i1, EVInt i2) -> do
+          resultReg <- getNextRegisterAndIncrement
+          addGenLLVM $ IAss (EVReg resultReg) (EVInt (case binOp of
+            BAdd -> i1 + i2
+            BSub -> i1 - i2
+            ))
+          return (EVReg resultReg, TVInt)
+        _ -> do
+          resultReg <- getNextRegisterAndIncrement
+          addGenLLVM $ IBinOp (EVReg resultReg) val1 val2 binOp
+          return (EVReg resultReg, TVInt)
     TVString -> do
-      addGenLLVM $ IFunCall (EVReg resultReg) TVString (Ident "_strcat") [(TVString, exprReg1), (TVString, exprReg2)]
-      return (EVReg resultReg, exprRegType1)
+      resultReg <- getNextRegisterAndIncrement
+      addGenLLVM $
+        IFunCall (EVReg resultReg) TVString (Ident "_strcat")
+                 [(TVString, val1), (TVString, val2)]
+      return (EVReg resultReg, TVString)
 
 generateLLVMExpr (ERel _ expr1 oper expr2) = do
   (exprReg1, exprRegType1) <- generateLLVMExpr expr1
@@ -224,12 +246,6 @@ generateLazyAndOr expr1 expr2 op = do
 
   currLabel <- getCurrentBasicBlockLabel
 
-  trueReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg trueReg) (EVBool True)
-
-  falseReg <- getNextRegisterAndIncrement
-  addGenLLVM $ IAss (EVReg falseReg) (EVBool False)
-
   labelRight <- getNextLabelAndIncrement
   labelEnd   <- getNextLabelAndIncrement
   resultReg  <- getNextRegisterAndIncrement
@@ -251,8 +267,8 @@ generateLazyAndOr expr1 expr2 op = do
   addGenLLVM $ ILabel labelEnd
 
   let shortCircuitVal = case op of
-        BAnd -> EVReg falseReg
-        BOr  -> EVReg trueReg
+        BAnd -> EVBool False
+        BOr  -> EVBool True
 
   addGenLLVM $ IPhi (EVReg resultReg) TVBool
                     (shortCircuitVal, currLabel)
@@ -264,10 +280,7 @@ generateLazyAndOr expr1 expr2 op = do
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
 generateIncDec ident op = do
     (identReg, identRegType) <- lookupIdentValueAndType ident
-    -- oneConstReg <- getNextRegisterAndIncrement
-    -- addGenLLVM $ IAss (EVReg oneConstReg) (EVInt 1)
     resultReg <- getNextRegisterAndIncrement
-    -- addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVReg oneConstReg) op
     case op of
       BAdd -> addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVInt 1) BAdd
       BSub -> addGenLLVM $ IBinOp (EVReg resultReg) identReg (EVInt 1) BSub
@@ -294,7 +307,7 @@ generateLLVMStmt (Decl _ itemsType items) (currDecl, prevDeclAndChanged) = do
         insertIdentValueAndType ident (EVReg reg) llvmItemsType
         return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
       Init _ ident expr -> do
-        identToReg <- gets identToValueAndType
+        identToLLVMValType <- gets identToValueAndType
         (_, _) <- generateLLVMStmt (Ass BNFC'NoPosition ident expr) (currDeclAcc, prevDeclAndChangedAcc)
         return (currDeclAcc ++ [ident], prevDeclAndChangedAcc)
     )
