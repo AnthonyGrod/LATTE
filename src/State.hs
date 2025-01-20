@@ -26,6 +26,7 @@ data CompileState = CompileState
   , globalStringMap  :: Map StringNum String
   , nextFreeStringNum :: StringNum
   , blocksOrder      :: [Label]
+  , whileBlocks      :: Map Label [Instr] -- starting while label and its instructions
   }
 
 initialState :: CompileState
@@ -42,6 +43,7 @@ initialState = CompileState
   , globalStringMap = Map.fromList [(1, "")] -- for empty string
   , nextFreeStringNum = 2
   , blocksOrder = []
+  , whileBlocks = Map.empty
   }
 
 setIdentToValueAndTypeToEmpty :: CompileState -> CompileState
@@ -52,26 +54,13 @@ type CompilerM a = StateT CompileState IO a
 data BasicBlock = BasicBlock
   { bbLabel        :: Label
   , bbInstructions :: [Instr]
-  , strCats        :: [StringNum]
   }
 
 emptyBasicBlock :: Label -> BasicBlock
 emptyBasicBlock label = BasicBlock
   { bbLabel = label
   , bbInstructions = []
-  , strCats = []
   }
-
-insertStrCat :: StringNum -> CompilerM ()
-insertStrCat strNum = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bbMap     = basicBlocks state
-  let currBB    = bbMap Map.! currLabel
-  let newBB     = currBB { strCats = strCats currBB ++ [strNum] }
-  put state
-    { basicBlocks = Map.insert currLabel newBB bbMap
-    }
 
 checkIfReturnValueNotDummy :: CompilerM Bool
 checkIfReturnValueNotDummy = do
@@ -191,15 +180,3 @@ insertBasicBlock bb = do
 
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
-
-removeLastInstrFromBasicBlockAndState :: CompilerM ()
-removeLastInstrFromBasicBlockAndState = do
-  state <- get
-  let currLabel = currBasicBlockLabel state
-  let bbMap     = basicBlocks state
-  let currBB    = bbMap Map.! currLabel
-  let newBB     = currBB { bbInstructions = init $ bbInstructions currBB }
-  put state
-    { basicBlocks = Map.insert currLabel newBB bbMap
-    , allInstructions = init $ allInstructions state
-    }
