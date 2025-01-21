@@ -168,8 +168,6 @@ builtInFunctions =
   , IFunDecl TVString (Ident "readString") []
   , IFunDecl TVString (Ident "_strcat") [TVString, TVString]
   , IFunDecl TVBool (Ident "_strcmp") [TVString, TVString]
-  , IFunDecl TVVoid (Ident "increaseRefCount") [TVString]
-  , IFunDecl TVVoid (Ident "decreaseRefCount") [TVString]
   ]
 
 instance Show Instr where
