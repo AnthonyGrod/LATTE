@@ -7,6 +7,8 @@ funkcji runtime.
 
 Ponadto program korzysta z bibliotek mtl, containers, array, process. 
 
+Zaimplementowane optymalizacje: LCSE, Zmienne indukcyjne i redukcja mocy.
+
 Uruchomienie:
 ```
 make

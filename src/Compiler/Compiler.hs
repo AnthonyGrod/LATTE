@@ -37,7 +37,6 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
 
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
   state <- get
-  -- liftIO $ print $ Map.keys (basicBlocks state)
   -- for each block in state, transform it via optimizeBlockLCSE
   let allBlocks = basicBlocks state
   let allBlocksOptimized = Map.map optimizeBlockLCSE allBlocks
@@ -50,7 +49,6 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
   globalStrings <- gets globalStringMap
   -- print all while blocks
   whileBlocks <- gets whileBlocks
-  liftIO $ print whileBlocks
   let globalStringsLLVM = map (\(num, str) -> IStringGlobal (Ident $ show num) str) $ Map.toList globalStrings
   let genLLVMWithStrings = globalStringsLLVM ++ builtInFunctionsFiltered ++ allInstrs
   let outputFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".ll"
@@ -148,7 +146,6 @@ generateLLVMExpr (Not _ expr) = do
       addGenLLVM $ IRelOp (EVReg resultReg) exprRegType exprValue (EVBool True) RE
       return (EVReg resultReg, TVBool)
 
-
 generateLLVMExpr (EMul _ expr1 mulOp expr2) = do
   (val1, t1) <- generateLLVMExpr expr1
   (val2, t2) <- generateLLVMExpr expr2
@@ -218,9 +215,9 @@ generateLLVMExpr (ERel _ expr1 oper expr2) = do
       addGenLLVM $ IRelOp (EVReg resultReg) TVBool exprReg1 exprReg2 relOp
       return (EVReg resultReg, TVBool)
 
-generateLLVMExpr (EAnd _ expr1 expr2) = generateLazyAndOr expr1 expr2 BAnd
+generateLLVMExpr (EAnd _ expr1 expr2) = generateLazyAndOrAssign expr1 expr2 BAnd
 
-generateLLVMExpr (EOr _ expr1 expr2) = generateLazyAndOr expr1 expr2 BOr
+generateLLVMExpr (EOr _ expr1 expr2) = generateLazyAndOrAssign expr1 expr2 BOr
 
 generateLLVMExpr (EApp _ ident exprs) = do
   identToFunSig <- gets identToFunSig
@@ -242,8 +239,8 @@ generateLLVMExpr (EApp _ ident exprs) = do
   return (EVReg regForFunRes, retType)
 
 
-generateLazyAndOr :: Expr -> Expr -> DBinOp -> CompilerM ValueAndType
-generateLazyAndOr expr1 expr2 op = do
+generateLazyAndOrAssign :: Expr -> Expr -> DBinOp -> CompilerM ValueAndType
+generateLazyAndOrAssign expr1 expr2 op = do
   (reg1, _) <- generateLLVMExpr expr1
 
   currLabel <- getCurrentBasicBlockLabel
@@ -277,6 +274,128 @@ generateLazyAndOr expr1 expr2 op = do
                     (reg2, labelRightEnd)
 
   return (EVReg resultReg, TVBool)
+
+generateLazyValAndCond :: Expr -> Label -> Label -> CompilerM (LLVMValue, LLVMType)
+generateLazyValAndCond expr labelTrue labelFalse = do
+  case expr of
+    ELitTrue _ -> do
+      return (EVBool True, TVBool)
+    ELitFalse _ -> do 
+      return (EVBool False, TVBool)
+    _ -> do
+      case expr of
+        EVar _ ident -> do
+          (reg, _) <- generateLLVMExpr expr
+          addGenLLVM $ IBr reg labelTrue labelFalse
+          return (reg, TVBool)
+        Not _ expr' -> do
+          generateLazyValAndCond expr' labelFalse labelTrue
+        ERel _ expr1 oper expr2 -> do
+          (reg1, typ) <- generateLLVMExpr expr1
+          (reg2, _) <- generateLLVMExpr expr2
+          let relOp = case oper of
+                LTH _ -> RLTH
+                LE _ -> RLE
+                GTH _ -> RGTH
+                GE _ -> RGE
+                EQU _ -> RQU
+                NE _ -> RE
+          reg <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg reg) typ reg1 reg2 relOp
+          addGenLLVM $ IBr (EVReg reg) labelTrue labelFalse
+          return (EVReg reg, TVBool)
+        EAnd _ expr1 expr2 -> do
+          (expr1, _) <- generateLazyValAndCond expr1 labelTrue labelFalse
+          c <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c) TVBool expr1 (EVBool True) RQU
+          continueLabel <- getNextLabelAndIncrement
+          addGenLLVM $ IBr (EVReg c) continueLabel labelFalse
+          addGenLLVM $ ILabel continueLabel
+
+          (expr2, _) <- generateLazyValAndCond expr2 labelTrue labelFalse
+          c2 <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c2) TVBool expr2 (EVBool True) RQU
+          addGenLLVM $ IBr (EVReg c2) labelTrue labelFalse
+          return (EVReg c2, TVBool)
+        EOr _ expr1 expr2 -> do
+          (expr1, _) <- generateLazyValAndCond expr1 labelTrue labelFalse
+          c <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c) TVBool expr1 (EVBool True) RQU
+          continueLabel <- getNextLabelAndIncrement
+          addGenLLVM $ IBr (EVReg c) labelTrue continueLabel
+          addGenLLVM $ ILabel continueLabel
+
+          (expr2, _) <- generateLazyValAndCond expr2 labelTrue labelFalse
+          c2 <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c2) TVBool expr2 (EVBool True) RQU
+          addGenLLVM $ IBr (EVReg c2) labelTrue labelFalse
+          return (EVReg c2, TVBool)
+        _ -> do
+          (reg, _) <- generateLLVMExpr expr
+          addGenLLVM $ IBr reg labelTrue labelFalse
+          return (reg, TVBool)
+
+
+generateLazyValOrCond :: Expr -> Label -> Label -> CompilerM (LLVMValue, LLVMType)
+generateLazyValOrCond expr labelTrue labelFalse = do
+  case expr of
+    ELitTrue _ -> do
+      return (EVBool True, TVBool)
+    ELitFalse _ -> do 
+      return (EVBool False, TVBool)
+    _ -> do
+      case expr of
+        EVar _ ident -> do
+          (reg, _) <- generateLLVMExpr expr
+          addGenLLVM $ IBr reg labelTrue labelFalse
+          return (reg, TVBool)
+        Not _ expr' -> do
+          generateLazyValOrCond expr' labelFalse labelTrue
+        ERel _ expr1 oper expr2 -> do
+          (reg1, typ) <- generateLLVMExpr expr1
+          (reg2, _) <- generateLLVMExpr expr2
+          let relOp = case oper of
+                LTH _ -> RLTH
+                LE _ -> RLE
+                GTH _ -> RGTH
+                GE _ -> RGE
+                EQU _ -> RQU
+                NE _ -> RE
+          reg <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg reg) typ reg1 reg2 relOp
+          return (EVReg reg, TVBool)
+        EAnd _ expr1 expr2 -> do
+          (expr1, _) <- generateLazyValOrCond expr1 labelTrue labelFalse
+          c <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c) TVBool expr1 (EVBool True) RQU
+          continueLabel <- getNextLabelAndIncrement
+          addGenLLVM $ IBr (EVReg c) labelFalse continueLabel
+          addGenLLVM $ ILabel continueLabel
+
+          (expr2, _) <- generateLazyValOrCond expr2 labelTrue labelFalse
+          c2 <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c2) TVBool expr2 (EVBool True) RQU
+          addGenLLVM $ IBr (EVReg c2) labelTrue labelFalse
+          return (EVReg c2, TVBool)
+        EOr _ expr1 expr2 -> do
+          (expr1, _) <- generateLazyValOrCond expr1 labelTrue labelFalse
+          c <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c) TVBool expr1 (EVBool True) RQU
+          continueLabel <- getNextLabelAndIncrement
+          addGenLLVM $ IBr (EVReg c) labelTrue continueLabel
+          addGenLLVM $ ILabel continueLabel
+
+          (expr2, _) <- generateLazyValOrCond expr2 labelTrue labelFalse
+          c2 <- getNextRegisterAndIncrement
+          addGenLLVM $ IRelOp (EVReg c2) TVBool expr2 (EVBool True) RQU
+          addGenLLVM $ IBr (EVReg c2) labelTrue labelFalse
+          return (EVReg c2, TVBool)
+        _ -> do
+          (reg, _) <- generateLLVMExpr expr
+          addGenLLVM $ IBr reg labelTrue labelFalse
+          return (reg, TVBool)
+
+        
 
 
 generateIncDec :: Ident -> DBinOp -> CompilerM (Register, LLVMType)
@@ -361,7 +480,6 @@ generateLLVMStmt (SExp _ expr) (currDecl, prevDeclAndChanged) = do
 generateLLVMStmt (Cond _ expr stmt) (currDecl, prevDeclAndChanged) = generateLLVMStmt (CondElse BNFC'NoPosition expr stmt (Empty BNFC'NoPosition)) (currDecl, prevDeclAndChanged)
 
 generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = do
-  (exprReg, _) <- generateLLVMExpr expr
   if isELitTrue expr
     then do
       (_, _) <- generateLLVMStmt stmt1 ([], Map.empty)
@@ -379,9 +497,16 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
           labelTrue <- getNextLabelAndIncrement
           labelFalse <- getNextLabelAndIncrement
           labelEnd  <- getNextLabelAndIncrement
+          case expr of
+            EAnd {} -> do generateLazyValAndCond expr labelTrue labelFalse
+            EOr {} -> do generateLazyValOrCond expr labelTrue labelFalse
+            _ -> do
+              (exprReg, _) <- generateLLVMExpr expr
+              addGenLLVM $ IBr exprReg labelTrue labelFalse
+              return (exprReg, TVBool)
 
           -- generate conditional jump and get current label and state
-          addGenLLVM $ IBr exprReg labelTrue labelFalse
+          -- addGenLLVM $ IBr exprReg labelTrue labelFalse
           currLabel <- getCurrentBasicBlockLabel
           oldState <- get
           let oldIdentToValueAndType = identToValueAndType oldState

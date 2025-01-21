@@ -29,6 +29,7 @@ data CompileState = CompileState
   , blocksOrder      :: [Label]
   , whileBlocks      :: Map Label [Label] -- starting label of whole while -> all BB labels in this while (except nested whiles)
   , currWhileBlock   :: Maybe Label
+  , isCondExprCalc   :: Bool
   }
 
 initialState :: CompileState
@@ -47,6 +48,7 @@ initialState = CompileState
   , blocksOrder = []
   , whileBlocks = Map.empty
   , currWhileBlock = Nothing
+  , isCondExprCalc = False
   }
 
 setIdentToValueAndTypeToEmpty :: CompileState -> CompileState
