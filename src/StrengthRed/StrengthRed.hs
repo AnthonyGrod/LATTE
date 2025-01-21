@@ -33,14 +33,14 @@ strengthReduceWhile labelBefore = do
   basicBlocks <- gets basicBlocks
   let allInstrs = concatMap (bbInstructions . (\label -> fromJust $ Map.lookup label basicBlocks)) whileBlockLabels
 
-  let allIVOrgPairs = allInductionVarOriginPairs allInstrs allInstrs
-  if null allIVOrgPairs then return ()
+  let allIVOrgTriples = allInductionVarOriginTriples allInstrs allInstrs
+  if null allIVOrgTriples then return ()
   else do
     liftIO $ print "-------------allIVOrgPairs------------: "
-    liftIO $ print allIVOrgPairs
+    liftIO $ print allIVOrgTriples
     liftIO $ print "-------------------------: "
 
-    mapM_ (reduceStrengthInBB labelBefore allIVOrgPairs) whileBlockLabels
+    mapM_ (reduceStrengthInBB labelBefore allIVOrgTriples) whileBlockLabels
     -- Then I will need to add a phi node to labelBefore.
     -- And at the end reduce actual mul to add with const, phi result.
 
@@ -55,38 +55,40 @@ getRHSReg instr = case instr of
     _ -> error "getRHSReg: not a mul instr"
   _ -> error "getRHSReg: not a mul instr"
 
-reduceStrengthInBB ::  Label -> [(LLVMValue, LLVMValue)] -> Label -> CompilerM ()
-reduceStrengthInBB labelBefore allIVOrgPairs whileBBToReduce = do
+reduceStrengthInBB ::  Label -> [(LLVMValue, LLVMValue, LLVMValue)] -> Label -> CompilerM ()
+reduceStrengthInBB labelBefore allIVOrgTriples whileBBToReduce = do
   givenBB <- gets $ fromJust . Map.lookup whileBBToReduce . basicBlocks
   let bbInstrs = bbInstructions givenBB
-  newInstrs <- mapM (\instr -> if doesInstrQualifyForStrengthReduction instr allIVOrgPairs then do
+  newInstrs <- mapM (\instr -> if doesInstrQualifyForStrengthReduction instr allIVOrgTriples then do
                                             liftIO $ print "instr that does qualify lhs----------: "
                                             liftIO $ print $ instr
                                             liftIO $ print $ getRHSReg instr
                                             let instrLHS = getRHSReg instr
                                             liftIO $ print "-------------------: "
-                                            liftIO $ print $ lookup instrLHS allIVOrgPairs
                                             liftIO $ print "xx-------------------xx: "
-                                            liftIO $ print allIVOrgPairs
-                                            let instrLHSOrigin = fromJust $ lookup instrLHS allIVOrgPairs
-                                            instrRep <- reduceStrengthInstr labelBefore instr instrLHSOrigin
+                                            liftIO $ print allIVOrgTriples
+                                            let instrLHSOrigin = fromJust $ lookupTriple instrLHS allIVOrgTriples
+                                            instrRep <- reduceStrengthInstr labelBefore instr (fst instrLHSOrigin) (snd instrLHSOrigin)
                                             liftIO $ print "instrRep: "
                                             liftIO $ print instrRep
                                             return instrRep
                                             else return instr) bbInstrs
-  replaceBasicBlockInstructions whileBBToReduce newInstrs
+  replaceBasicBlockInstructions whileBBToReduce newInstrs where
+    lookupTriple :: LLVMValue -> [(LLVMValue, LLVMValue, LLVMValue)] -> Maybe (LLVMValue, LLVMValue)
+    lookupTriple iv [] = Nothing
+    lookupTriple iv ((iv', org, constVal):triples) = if iv == iv' then Just (org, constVal) else lookupTriple iv triples
 
 
 
 -- labelBody = labelBefore + 2
-reduceStrengthInstr :: Label -> Instr -> LLVMValue -> CompilerM Instr
-reduceStrengthInstr labelBefore mulInstr origin = do
+reduceStrengthInstr :: Label -> Instr -> LLVMValue -> LLVMValue -> CompilerM Instr
+reduceStrengthInstr labelBefore mulInstr origin constVal = do
   -- add instruction to the beginning of beforeLabel and then replace the mulInstr with addInstr and return mulInstr.
   -- unpack mulInstr
   liftIO $ putStrLn "reduceStrengthInstr: "
   liftIO $ print mulInstr
   let (IBinOp lhs rhs1 rhs2 BMul) = mulInstr
-  let (EVReg reg) = lhs
+  let (EVInt c) = constVal
   let (EVInt constVal, EVReg iv) = case (rhs1, rhs2) of
         (EVInt i, EVReg r) -> (EVInt i, EVReg r)
         (EVReg r, EVInt i) -> (EVInt i, EVReg r)
@@ -94,7 +96,7 @@ reduceStrengthInstr labelBefore mulInstr origin = do
   forAfterReg <- getNextRegisterAndIncrement
   let mulInitInstr = IBinOp (EVReg forBeforeReg) (EVInt constVal) origin BMul
   let afterLabelInstr = IPhi (EVReg forAfterReg) TVInt (EVReg forBeforeReg, labelBefore - 1) (lhs, labelBefore + 2)
-  let addInstr = IBinOp lhs (EVReg forAfterReg) (EVInt constVal) BAdd
+  let addInstr = IBinOp lhs (EVReg forAfterReg) (EVInt (constVal * c)) BAdd
   liftIO $ print "addInstr: "
   liftIO $ print addInstr
   -- insert mulInitInstr to the absolute beginning of labelBefore
@@ -118,41 +120,41 @@ reduceStrengthInstr labelBefore mulInstr origin = do
 
 -- In order for a instruction to qualify for strength reduction, it needs to be a multiplication where one
 -- expr is a constant number value and the other expr is an induction variable
-doesInstrQualifyForStrengthReduction :: Instr -> [(LLVMValue, LLVMValue)] -> Bool
+doesInstrQualifyForStrengthReduction :: Instr -> [(LLVMValue, LLVMValue, LLVMValue)] -> Bool
 doesInstrQualifyForStrengthReduction instr inductionVarAndOriginPairs =
   trace ("doesInstrQualifyForStrengthReduction: " ++ show instr) $ case instr of
   IBinOp lhs rhs1 rhs2 op -> case op of
     BMul -> case (rhs1, rhs2) of
-      (EVInt _, EVReg r) -> any (\(iv, _) -> iv == EVReg r) inductionVarAndOriginPairs
-      (EVReg r, EVInt _) -> any (\(iv, _) -> iv == EVReg r) inductionVarAndOriginPairs
+      (EVInt _, EVReg r) -> any (\(iv, _, _) -> iv == EVReg r) inductionVarAndOriginPairs
+      (EVReg r, EVInt _) -> any (\(iv, _, _) -> iv == EVReg r) inductionVarAndOriginPairs
       _ -> False
     _ -> False
   _ -> False
 
-allInductionVarOriginPairs :: [Instr] -> [Instr] -> [(LLVMValue, LLVMValue)]
-allInductionVarOriginPairs instrs allInstrs = allInductionVarOriginPairs' instrs allInstrs [] where
-  allInductionVarOriginPairs' :: [Instr] -> [Instr] -> [(LLVMValue, LLVMValue)] -> [(LLVMValue, LLVMValue)]
-  allInductionVarOriginPairs' [] allInstrs acc = acc
-  allInductionVarOriginPairs' (instr:instrs) allInstrs acc = case instr of
+allInductionVarOriginTriples :: [Instr] -> [Instr] -> [(LLVMValue, LLVMValue, LLVMValue)]
+allInductionVarOriginTriples instrs allInstrs = allInductionVarOriginTriples' instrs allInstrs [] where
+  allInductionVarOriginTriples' :: [Instr] -> [Instr] -> [(LLVMValue, LLVMValue, LLVMValue)] -> [(LLVMValue, LLVMValue, LLVMValue)]
+  allInductionVarOriginTriples' [] allInstrs acc = acc
+  allInductionVarOriginTriples' (instr:instrs) allInstrs acc = case instr of
     IBinOp lhs rhs1 rhs2 op -> 
-      trace ("allInductionVarOriginPairs': " ++ show instr) $
+      trace ("allInductionVarOriginTriples': " ++ show instr) $
       trace ("lhs: " ++ show lhs) $
       trace ("checkIfValidInductionVar: " ++ show (checkIfValidInductionVar lhs rhs1 rhs2 allInstrs acc)) $
       trace ("acc: " ++ show acc) $
       if not (checkIfValidInductionVar lhs rhs1 rhs2 allInstrs acc) then 
-        allInductionVarOriginPairs' instrs allInstrs (removeInductionVarPair lhs acc)
+        allInductionVarOriginTriples' instrs allInstrs (removeInductionVarPair lhs acc)
       else
         case op of
         BAdd -> case (rhs1, rhs2) of
-          (EVReg r, EVInt i) -> allInductionVarOriginPairs' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs):acc)
-          (EVInt i, EVReg r) -> allInductionVarOriginPairs' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs):acc)
-          _ -> allInductionVarOriginPairs' instrs allInstrs acc
+          (EVReg r, EVInt i) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
+          (EVInt i, EVReg r) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
+          _ -> allInductionVarOriginTriples' instrs allInstrs acc
         BSub -> case (rhs1, rhs2) of
-          (EVReg r, EVInt i) -> allInductionVarOriginPairs' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs):acc)
-          (EVInt i, EVReg r) -> allInductionVarOriginPairs' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs):acc)
-          _ -> allInductionVarOriginPairs' instrs allInstrs acc
-        _ -> allInductionVarOriginPairs' instrs allInstrs acc
-    _ -> allInductionVarOriginPairs' instrs allInstrs acc
+          (EVReg r, EVInt i) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
+          (EVInt i, EVReg r) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
+          _ -> allInductionVarOriginTriples' instrs allInstrs acc
+        _ -> allInductionVarOriginTriples' instrs allInstrs acc
+    _ -> allInductionVarOriginTriples' instrs allInstrs acc
 
 -- Search for origin of reg: find %reg = phi [%origin, %somelabel]
 getOrigin :: LLVMValue -> [Instr] -> LLVMValue
@@ -162,18 +164,18 @@ getOrigin reg (instr:instrs) =
   (IPhi lhsReg typ (val1, label1) (val2, label2)) -> if lhsReg == reg then val1 else getOrigin reg instrs
   _ -> getOrigin reg instrs
 
-removeInductionVarPair :: LLVMValue -> [(LLVMValue, LLVMValue)] -> [(LLVMValue, LLVMValue)]
-removeInductionVarPair iv = filter (\(v1,v2) -> v1 /= iv && v2 /= iv)
+removeInductionVarPair :: LLVMValue -> [(LLVMValue, LLVMValue, LLVMValue)] -> [(LLVMValue, LLVMValue, LLVMValue)]
+removeInductionVarPair iv = filter (\(v1,v2,_) -> v1 /= iv && v2 /= iv)
 
 -- check if only one assignment to induction var. TODO: don't accept IV in if, while
-checkIfValidInductionVar :: LLVMValue -> LLVMValue -> LLVMValue -> [Instr] -> [(LLVMValue, LLVMValue)] -> Bool
+checkIfValidInductionVar :: LLVMValue -> LLVMValue -> LLVMValue -> [Instr] -> [(LLVMValue, LLVMValue, LLVMValue)] -> Bool
 checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting = case instrs of
   [] -> False
   (instr:instrs) -> case instr of
-    IAss lhs rhs -> if lhs == iv then not (any (\(org2, org) -> 
+    IAss lhs rhs -> if lhs == iv then not (any (\(org2, org, _) -> 
       org == lhs || org == rhs1 || org == rhs2 ||
       org2 == lhs || org2 == rhs1 || org2 == rhs2) alreadyExisting) else checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
-    IBinOp lhs rhs1 rhs2 op -> if lhs == iv then not (any (\(org2, org) -> 
+    IBinOp lhs rhs1 rhs2 op -> if lhs == iv then not (any (\(org2, org, _) -> 
       org == lhs || org == rhs1 || org == rhs2 ||
       org2 == lhs || org2 == rhs1 || org2 == rhs2) alreadyExisting) else checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
     _ -> checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
