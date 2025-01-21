@@ -11,6 +11,7 @@ import qualified Data.Map as Map
 import Control.Monad.State
 import Control.Monad.Except
 import Control.Monad.Identity (Identity)
+import Data.Maybe (fromJust)
 
 
 data CompileState = CompileState
@@ -26,7 +27,8 @@ data CompileState = CompileState
   , globalStringMap  :: Map StringNum String
   , nextFreeStringNum :: StringNum
   , blocksOrder      :: [Label]
-  , whileBlocks      :: Map Label [Instr] -- starting while label and its instructions
+  , whileBlocks      :: Map Label [Label] -- starting label of whole while -> all BB labels in this while (except nested whiles)
+  , currWhileBlock   :: Maybe Label
   }
 
 initialState :: CompileState
@@ -44,6 +46,7 @@ initialState = CompileState
   , nextFreeStringNum = 2
   , blocksOrder = []
   , whileBlocks = Map.empty
+  , currWhileBlock = Nothing
   }
 
 setIdentToValueAndTypeToEmpty :: CompileState -> CompileState
@@ -176,7 +179,34 @@ getAllBasicBlocks = gets basicBlocks
 insertBasicBlock :: BasicBlock -> CompilerM ()
 insertBasicBlock bb = do
   state <- get
-  put state { basicBlocks = Map.insert (bbLabel bb) bb (basicBlocks state) }
+  let currentWhileBlock = currWhileBlock state
+  put state { 
+    basicBlocks = Map.insert (bbLabel bb) bb (basicBlocks state), 
+    whileBlocks = case currentWhileBlock of
+      Just label -> Map.insertWith (++) label [bbLabel bb] (whileBlocks state)
+      Nothing -> whileBlocks state
+    }
 
 insertEmptyBasicBlock :: Label -> CompilerM ()
 insertEmptyBasicBlock label = insertBasicBlock $ emptyBasicBlock label
+
+replaceBasicBlockInstructions :: Label -> [Instr] -> CompilerM ()
+replaceBasicBlockInstructions label instrs = do
+  state <- get
+  let bbMap = basicBlocks state
+  let bb = bbMap Map.! label
+  let newBB = bb { bbInstructions = instrs }
+  put state { basicBlocks = Map.insert label newBB bbMap }
+
+setWhileBlockLabel :: Maybe Label -> CompilerM ()
+setWhileBlockLabel label = modify $ \st -> st { currWhileBlock = label }
+
+setWhileBlockLabelToNothing :: CompilerM ()
+setWhileBlockLabelToNothing = modify $ \st -> st { currWhileBlock = Nothing }
+
+getWhileBlockLabel :: CompilerM (Maybe Label)
+getWhileBlockLabel = gets currWhileBlock
+
+insertBBLabelToCurrWhile :: Label -> CompilerM ()
+insertBBLabelToCurrWhile label = modify $ \st -> st { whileBlocks = Map.insertWith (++) (fromJust $ currWhileBlock st) [label] (whileBlocks st) }
+-- TODO: label needs to be insterted when insterting a new Basic Block

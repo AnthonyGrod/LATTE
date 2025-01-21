@@ -11,6 +11,7 @@ import Data.List (nub, sort)
 import Parser.Abs
 import Aux
 import LCSE.LCSE
+import StrengthRed.StrengthRed
 import State
 import qualified Control.Monad
 import Control.Monad.State
@@ -35,19 +36,21 @@ generateLLVMProgram (Program _ topDefs) fileNameWithPath = do
   insertIdentFunSigs $ zip builtInFunctionIdents funValsFiltered
 
   topDefsLLVM <- mapM generateLLVMTopDef topDefs
-  -- print all basic blocks labels
   state <- get
-  liftIO $ print $ Map.keys (basicBlocks state)
+  -- liftIO $ print $ Map.keys (basicBlocks state)
   -- for each block in state, transform it via optimizeBlockLCSE
-  -- and then print all instructions
   let allBlocks = basicBlocks state
-  let allInstrs = concatMap bbInstructions (Map.elems allBlocks)
   let allBlocksOptimized = Map.map optimizeBlockLCSE allBlocks
+  modify $ \s -> s { basicBlocks = allBlocksOptimized }
+  strengthReducaAllWhiles
+  optimizedBasicBlocks <- gets basicBlocks
   blocksOrder <- getBlocksOrder
-  let allInstrs = concatMap (\label -> bbInstructions (allBlocksOptimized Map.! label)) blocksOrder
-  genLLVM <- getAllBasicBlocksGenLLVM
+  let allInstrs = concatMap (\label -> bbInstructions (optimizedBasicBlocks Map.! label)) blocksOrder
   -- get all strings and put them on the top
   globalStrings <- gets globalStringMap
+  -- print all while blocks
+  whileBlocks <- gets whileBlocks
+  liftIO $ print whileBlocks
   let globalStringsLLVM = map (\(num, str) -> IStringGlobal (Ident $ show num) str) $ Map.toList globalStrings
   let genLLVMWithStrings = globalStringsLLVM ++ builtInFunctionsFiltered ++ allInstrs
   let outputFilePath = reverse (drop 4 (reverse fileNameWithPath)) ++ ".ll"
@@ -468,12 +471,15 @@ generateLLVMStmt (CondElse _ expr stmt1 stmt2) (currDecl, prevDeclAndChanged) = 
 generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   oldState <- get
   oldValueAndTypeMap <- gets identToValueAndType
+  oldWhileLabel <- getWhileBlockLabel
 
   currLabel <- getCurrentBasicBlockLabel
   labelBefore <- getNextLabelAndIncrement
   labelCond <- getNextLabelAndIncrement
   labelBody <- getNextLabelAndIncrement
   labelEnd <- getNextLabelAndIncrement
+
+  setWhileBlockLabelToNothing
 
   insertEmptyBasicBlock labelBody
   setcurrBasicBlockLabel labelBody
@@ -509,6 +515,7 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   modify $ \s -> s { nextFreeLabelNum = labelEnd + 1 }
 
   -- insert labelBefore and labelCond blocks again along wiht their instructions
+  setWhileBlockLabel $ Just labelBefore
   insertEmptyBasicBlock labelBefore
   setcurrBasicBlockLabel labelBefore
   mapM_ addGenLLVM instrBeforeAcc
@@ -538,6 +545,7 @@ generateLLVMStmt (While _ expr stmt) (currDecl, prevDeclAndChanged) = do
   addGenLLVM $ ILabel labelEnd
 
   modify $ \s -> s { nextFreeRegNum = extractRegisterValue expr + 1 }
+  setWhileBlockLabel oldWhileLabel
 
   return (currDecl, Map.union (Map.fromList phiRes) prevDeclAndChanged)
 

@@ -9,7 +9,6 @@ import State
 import Parser.Abs
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Debug.Trace (trace)
 
 optimizeBlockLCSE :: BasicBlock -> BasicBlock
 optimizeBlockLCSE block = block { bbInstructions = optimizeInstructionsLCSE (bbInstructions block) [] }
@@ -38,10 +37,8 @@ replaceAllRegisters reg reg_x = map (replaceRegInInstrRHS reg reg_x)
 optimizeLCSEStep :: Instr -> [Instr] -> [Instr] -> [Instr]
 optimizeLCSEStep focus [] acc = acc
 optimizeLCSEStep focus (head:rest) acc =
-  trace ("focus: " ++ show focus ++ " head: " ++ show head) $
   if areInstrsTheSameType focus head
     then 
-      trace ("focus: " ++ show focus ++ " head: " ++ show head) $
       case focus of
       IAss lhs rhs ->
         let headRHS = getAssRHS head
