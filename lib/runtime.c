@@ -35,9 +35,6 @@ void error() {
     exit(1);
 }
 
-int _strlen(char* str) {
-    return (int)strlen(str);
-}
 
 char* _strcat(char* dest, char* src) {
     if (!dest || !src) {
@@ -58,6 +55,3 @@ bool _strcmp(char* str1, char* str2) {
     return strcmp(str1, str2) == 0;
 }
 
-char* _strcpy(char* dest, char* src) {
-    return strcpy(dest, src);
-}
