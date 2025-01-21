@@ -150,8 +150,8 @@ allInductionVarOriginTriples instrs allInstrs = allInductionVarOriginTriples' in
           (EVInt i, EVReg r) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
           _ -> allInductionVarOriginTriples' instrs allInstrs acc
         BSub -> case (rhs1, rhs2) of
-          (EVReg r, EVInt i) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
-          (EVInt i, EVReg r) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt i):acc)
+          (EVReg r, EVInt i) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt (-i)):acc)
+          (EVInt i, EVReg r) -> allInductionVarOriginTriples' instrs allInstrs ((lhs, getOrigin (EVReg r) allInstrs, EVInt (-i)):acc)
           _ -> allInductionVarOriginTriples' instrs allInstrs acc
         _ -> allInductionVarOriginTriples' instrs allInstrs acc
     _ -> allInductionVarOriginTriples' instrs allInstrs acc
