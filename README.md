@@ -7,9 +7,6 @@ funkcji runtime.
 
 Ponadto program korzysta z bibliotek mtl, containers, array, process. 
 
-Podczas pisania kodu kompilatora korzystałem z funkcjonalności podpowiedzi VS Code oraz
-VS Code Copilot.
-
 Uruchomienie:
 ```
 make
