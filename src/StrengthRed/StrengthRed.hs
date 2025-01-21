@@ -135,7 +135,12 @@ allInductionVarOriginPairs instrs allInstrs = allInductionVarOriginPairs' instrs
   allInductionVarOriginPairs' [] allInstrs acc = acc
   allInductionVarOriginPairs' (instr:instrs) allInstrs acc = case instr of
     IBinOp lhs rhs1 rhs2 op -> 
-      if not (checkIfValidInductionVar lhs allInstrs acc) then allInductionVarOriginPairs' instrs allInstrs acc
+      trace ("allInductionVarOriginPairs': " ++ show instr) $
+      trace ("lhs: " ++ show lhs) $
+      trace ("checkIfValidInductionVar: " ++ show (checkIfValidInductionVar lhs rhs1 rhs2 allInstrs acc)) $
+      trace ("acc: " ++ show acc) $
+      if not (checkIfValidInductionVar lhs rhs1 rhs2 allInstrs acc) then 
+        allInductionVarOriginPairs' instrs allInstrs (removeInductionVarPair lhs acc)
       else
         case op of
         BAdd -> case (rhs1, rhs2) of
@@ -157,29 +162,19 @@ getOrigin reg (instr:instrs) =
   (IPhi lhsReg typ (val1, label1) (val2, label2)) -> if lhsReg == reg then val1 else getOrigin reg instrs
   _ -> getOrigin reg instrs
 
+removeInductionVarPair :: LLVMValue -> [(LLVMValue, LLVMValue)] -> [(LLVMValue, LLVMValue)]
+removeInductionVarPair iv = filter (\(v1,v2) -> v1 /= iv && v2 /= iv)
+
 -- check if only one assignment to induction var. TODO: don't accept IV in if, while
-checkIfValidInductionVar :: LLVMValue -> [Instr] -> [(LLVMValue, LLVMValue)] -> Bool
-checkIfValidInductionVar iv instrs alreadyExisting = case instrs of
+checkIfValidInductionVar :: LLVMValue -> LLVMValue -> LLVMValue -> [Instr] -> [(LLVMValue, LLVMValue)] -> Bool
+checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting = case instrs of
   [] -> False
   (instr:instrs) -> case instr of
-    IAss lhs rhs -> if lhs == iv then not (any (\(iv, _) -> iv == lhs) alreadyExisting) else checkIfValidInductionVar iv instrs alreadyExisting
-    _ -> checkIfValidInductionVar iv instrs alreadyExisting
+    IAss lhs rhs -> if lhs == iv then not (any (\(org2, org) -> 
+      org == lhs || org == rhs1 || org == rhs2 ||
+      org2 == lhs || org2 == rhs1 || org2 == rhs2) alreadyExisting) else checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
+    IBinOp lhs rhs1 rhs2 op -> if lhs == iv then not (any (\(org2, org) -> 
+      org == lhs || org == rhs1 || org == rhs2 ||
+      org2 == lhs || org2 == rhs1 || org2 == rhs2) alreadyExisting) else checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
+    _ -> checkIfValidInductionVar iv rhs1 rhs2 instrs alreadyExisting
 
-isAssignToIV :: LLVMValue -> Instr -> Bool
-isAssignToIV iv instr = case instr of
-  IAss lhs rhs -> lhs == iv
-  IBinOp lhs rhs1 rhs2 op -> lhs == iv
-  _ -> False
-
-
-
-
-
--- TODO: I might need this.
-  -- removeAllDuplicates acc
-  -- where
-  --   removeAllDuplicates :: (Eq a) => [a] -> [a]
-  --   removeAllDuplicates xs = filter (\x -> count x xs == 1) xs
-
-  --   count :: (Eq a) => a -> [a] -> Int
-  --   count x = length . filter (== x)
