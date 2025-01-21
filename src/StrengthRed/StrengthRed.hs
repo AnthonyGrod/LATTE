@@ -135,7 +135,7 @@ allInductionVarOriginPairs instrs allInstrs = allInductionVarOriginPairs' instrs
   allInductionVarOriginPairs' [] allInstrs acc = acc
   allInductionVarOriginPairs' (instr:instrs) allInstrs acc = case instr of
     IBinOp lhs rhs1 rhs2 op -> 
-      if not (checkIfValidInductionVar lhs allInstrs) then allInductionVarOriginPairs' instrs allInstrs acc
+      if not (checkIfValidInductionVar lhs allInstrs acc) then allInductionVarOriginPairs' instrs allInstrs acc
       else
         case op of
         BAdd -> case (rhs1, rhs2) of
@@ -158,8 +158,12 @@ getOrigin reg (instr:instrs) =
   _ -> getOrigin reg instrs
 
 -- check if only one assignment to induction var. TODO: don't accept IV in if, while
-checkIfValidInductionVar :: LLVMValue -> [Instr] -> Bool
-checkIfValidInductionVar iv instrs = length (filter (isAssignToIV iv) instrs) == 1
+checkIfValidInductionVar :: LLVMValue -> [Instr] -> [(LLVMValue, LLVMValue)] -> Bool
+checkIfValidInductionVar iv instrs alreadyExisting = case instrs of
+  [] -> False
+  (instr:instrs) -> case instr of
+    IAss lhs rhs -> if lhs == iv then not (any (\(iv, _) -> iv == lhs) alreadyExisting) else checkIfValidInductionVar iv instrs alreadyExisting
+    _ -> checkIfValidInductionVar iv instrs alreadyExisting
 
 isAssignToIV :: LLVMValue -> Instr -> Bool
 isAssignToIV iv instr = case instr of
